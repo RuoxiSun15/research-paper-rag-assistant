@@ -98,6 +98,10 @@ class AzureConfig:
             # Strip trailing slashes to prevent double-slash in API URLs
             self.doc_intelligence_endpoint = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT").rstrip('/')
             self.doc_intelligence_key = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+            self.formula_extraction_enabled = _get_optional_env(
+                "FORMULA_EXTRACTION_ENABLED",
+                "false"
+            ).lower() == "true"
 
             # Azure AI Foundry - Embedding Model
             # CRITICAL: These are separate from Azure OpenAI Service
@@ -228,6 +232,7 @@ class AzureConfig:
         logger.info("-" * 60)
         logger.info(f"Document Intelligence Endpoint: {self.doc_intelligence_endpoint}")
         logger.info(f"Document Intelligence Key: {_mask_secret(self.doc_intelligence_key)}")
+        logger.info(f"Formula Extraction Enabled: {self.formula_extraction_enabled}")
         logger.info("-" * 60)
         logger.info(f"AI Foundry Embedding Endpoint: {self.ai_foundry_embedding_endpoint}")
         logger.info(f"AI Foundry Embedding Deployment: {self.ai_foundry_embedding_deployment}")

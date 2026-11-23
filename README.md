@@ -142,7 +142,7 @@ PDF Document
 - [x] PDF upload and text-based RAG
 - [x] Paper-specific retrieval using `source_file`
 - [x] Unit tests for source-file filter generation
-- [ ] Formula extraction with LaTeX and page metadata
+- [x] Formula extraction with LaTeX and page metadata (live Azure validation pending)
 - [ ] Figure detection and cropped-image storage
 - [ ] Multimodal chart and diagram understanding
 - [ ] Table-aware retrieval and export
@@ -238,6 +238,8 @@ Edit `.env` and fill in all values:
 # Azure Document Intelligence
 AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://your-doc-intelligence.cognitiveservices.azure.com/
 AZURE_DOCUMENT_INTELLIGENCE_KEY=your_key_here
+# Paid Document Intelligence add-on; leave false unless formula OCR is needed.
+FORMULA_EXTRACTION_ENABLED=false
 
 # Azure AI Foundry - Embedding Model
 AZURE_AI_FOUNDRY_EMBEDDING_ENDPOINT=https://your-endpoint.openai.azure.com/

@@ -62,6 +62,7 @@ class UploadResponse(BaseModel):
     file_name: str = Field(..., description="Name of uploaded file")
     chunks_created: int = Field(..., description="Number of chunks created")
     chunks_indexed: int = Field(..., description="Number of chunks indexed")
+    formulas_detected: int = Field(0, description="Number of mathematical formulas detected")
     processing_time_seconds: float = Field(..., description="Total processing time")
 
     class Config:
@@ -72,6 +73,7 @@ class UploadResponse(BaseModel):
                 "file_name": "document.pdf",
                 "chunks_created": 25,
                 "chunks_indexed": 25,
+                "formulas_detected": 8,
                 "processing_time_seconds": 12.5
             }
         }

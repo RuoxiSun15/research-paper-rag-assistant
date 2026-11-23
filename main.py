@@ -15,6 +15,7 @@ import sys
 from pathlib import Path
 
 from src.data_pipeline.document_extractor import DocumentExtractor
+from src.data_pipeline.formula_parser import build_formula_chunks
 from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
@@ -56,14 +57,22 @@ def process_document(pdf_path: str, logger):
         metadata = extraction_result["metadata"]
 
         logger.info(f"✓ Extracted {len(extracted_text)} characters from {extraction_result['page_count']} pages")
+        logger.info(f"✓ Detected {len(extraction_result.get('formulas', []))} formulas")
 
         # Step 2: Chunk text
         logger.info("\n[2/5] Chunking text...")
         chunker = TextChunker()
         chunks = chunker.chunk_text(extracted_text, metadata=metadata)
+        formula_chunks = build_formula_chunks(
+            extraction_result.get("formulas", []),
+            metadata,
+            start_index=len(chunks),
+        )
+        chunks.extend(formula_chunks)
 
         stats = chunker.get_chunk_statistics(chunks)
         logger.info(f"✓ Created {stats['total_chunks']} chunks")
+        logger.info(f"  - Formula chunks: {len(formula_chunks)}")
         logger.info(f"  - Avg size: {stats['avg_chunk_size']:.0f} chars")
         logger.info(f"  - Min/Max: {stats['min_chunk_size']}/{stats['max_chunk_size']}")
 
@@ -99,6 +108,7 @@ def process_document(pdf_path: str, logger):
         logger.info(f"Source file: {pdf_file.name}")
         logger.info(f"Chunks created: {len(chunks)}")
         logger.info(f"Chunks indexed: {result['indexed']}")
+        logger.info(f"Formulas detected: {len(extraction_result.get('formulas', []))}")
         logger.info("=" * 60)
 
     except Exception as e:

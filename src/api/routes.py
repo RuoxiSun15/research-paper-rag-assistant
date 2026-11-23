@@ -22,6 +22,7 @@ from src.api.models import (
     ChunkInfo
 )
 from src.data_pipeline.document_extractor import DocumentExtractor
+from src.data_pipeline.formula_parser import build_formula_chunks
 from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
@@ -167,13 +168,24 @@ async def upload_document(file: UploadFile = File(...)):
             metadata["source_file"] = file.filename  # Use original filename
 
             logger.info(f"Extracted {len(extracted_text)} characters from {extraction_result['page_count']} pages")
+            formulas_detected = len(extraction_result.get("formulas", []))
+            logger.info(f"Detected {formulas_detected} formulas")
 
             # Step 2: Chunk text
             logger.info("Step 2: Chunking text...")
             chunker = TextChunker()
             chunks = chunker.chunk_text(extracted_text, metadata=metadata)
+            formula_chunks = build_formula_chunks(
+                extraction_result.get("formulas", []),
+                metadata,
+                start_index=len(chunks),
+            )
+            chunks.extend(formula_chunks)
 
-            logger.info(f"Created {len(chunks)} chunks")
+            logger.info(
+                f"Created {len(chunks)} chunks "
+                f"({len(formula_chunks)} formula chunks)"
+            )
 
             # Step 3: Generate embeddings
             logger.info("Step 3: Generating embeddings...")
@@ -204,6 +216,7 @@ async def upload_document(file: UploadFile = File(...)):
             track_metric("chunks_created", len(chunks), {"file": file.filename})
             track_metric("chunks_indexed", indexing_result['indexed'], {"file": file.filename})
             track_metric("processing_time", processing_time, {"file": file.filename})
+            track_metric("formulas_detected", formulas_detected, {"file": file.filename})
             track_event("document_upload_completed", {
                 "file_name": file.filename,
                 "chunks": len(chunks),
@@ -216,6 +229,7 @@ async def upload_document(file: UploadFile = File(...)):
                 file_name=file.filename,
                 chunks_created=len(chunks),
                 chunks_indexed=indexing_result['indexed'],
+                formulas_detected=formulas_detected,
                 processing_time_seconds=round(processing_time, 2)
             )
 
