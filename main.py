@@ -106,7 +106,7 @@ def process_document(pdf_path: str, logger):
         sys.exit(1)
 
 
-def test_retrieval(query: str, top_k: int, logger):
+def test_retrieval(query: str, top_k: int, logger, source_file: str = None):
     """
     Test retrieval functionality.
 
@@ -114,16 +114,18 @@ def test_retrieval(query: str, top_k: int, logger):
         query: Search query
         top_k: Number of results
         logger: Logger instance
+        source_file: Optional PDF file name used to filter retrieval
     """
     logger.info("=" * 60)
     logger.info("TESTING RETRIEVAL")
     logger.info("=" * 60)
     logger.info(f"Query: {query}")
     logger.info(f"Top-K: {top_k}")
+    logger.info(f"Source file: {source_file or 'All indexed documents'}")
 
     try:
         retriever = AzureSearchRetriever(top_k=top_k)
-        documents = retriever.retrieve(query)
+        documents = retriever.retrieve(query, source_file=source_file)
 
         logger.info(f"\nRetrieved {len(documents)} documents:")
         logger.info("-" * 60)
@@ -140,7 +142,7 @@ def test_retrieval(query: str, top_k: int, logger):
         sys.exit(1)
 
 
-def test_query(question: str, top_k: int, logger):
+def test_query(question: str, top_k: int, logger, source_file: str = None):
     """
     Test multi-agent query.
 
@@ -148,15 +150,17 @@ def test_query(question: str, top_k: int, logger):
         question: User question
         top_k: Number of chunks to retrieve
         logger: Logger instance
+        source_file: Optional PDF file name used to filter retrieval
     """
     logger.info("=" * 60)
     logger.info("TESTING MULTI-AGENT RAG QUERY")
     logger.info("=" * 60)
     logger.info(f"Question: {question}")
+    logger.info(f"Source file: {source_file or 'All indexed documents'}")
 
     try:
         rag_system = MultiAgentRAG(top_k=top_k)
-        response = rag_system.query(question)
+        response = rag_system.query(question, source_file=source_file)
 
         logger.info("\n" + "=" * 60)
         logger.info("RESPONSE")
@@ -265,11 +269,19 @@ Examples:
     retrieve_parser = subparsers.add_parser("retrieve", help="Test retrieval")
     retrieve_parser.add_argument("query", help="Search query")
     retrieve_parser.add_argument("--top-k", type=int, default=5, help="Number of results (default: 5)")
+    retrieve_parser.add_argument(
+        "--source-file",
+        help="Only retrieve chunks from this PDF (for example: TimeGRU.pdf)"
+    )
 
     # Query command
     query_parser = subparsers.add_parser("query", help="Test multi-agent query")
     query_parser.add_argument("question", help="User question")
     query_parser.add_argument("--top-k", type=int, default=5, help="Number of chunks (default: 5)")
+    query_parser.add_argument(
+        "--source-file",
+        help="Only use chunks from this PDF when generating the answer"
+    )
 
     # Index command
     index_parser = subparsers.add_parser("index", help="Manage search index")
@@ -298,10 +310,10 @@ Examples:
         process_document(args.pdf_path, logger)
 
     elif args.command == "retrieve":
-        test_retrieval(args.query, args.top_k, logger)
+        test_retrieval(args.query, args.top_k, logger, args.source_file)
 
     elif args.command == "query":
-        test_query(args.question, args.top_k, logger)
+        test_query(args.question, args.top_k, logger, args.source_file)
 
     elif args.command == "index":
         manage_index(args.action, logger)

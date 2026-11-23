@@ -124,8 +124,11 @@ class AzureConfig:
             self.search_admin_key = _get_required_env("AZURE_SEARCH_ADMIN_KEY")
             self.search_index_name = _get_optional_env("AZURE_SEARCH_INDEX_NAME", "rag-documents-index")
 
-            # Azure Application Insights
-            self.app_insights_connection_string = _get_required_env("APPLICATIONINSIGHTS_CONNECTION_STRING")
+            # Azure Application Insights (optional for local development)
+            self.app_insights_connection_string = _get_optional_env(
+                "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                ""
+            )
 
             # Application Settings
             self.chunk_size = int(_get_optional_env("CHUNK_SIZE", "1200"))

@@ -35,6 +35,10 @@ class QueryRequest(BaseModel):
     question: str = Field(..., min_length=1, description="User's question")
     session_id: str = Field(..., min_length=1, description="Session identifier provided by backend")
     top_k: Optional[int] = Field(5, ge=1, le=20, description="Number of chunks to retrieve")
+    source_file: Optional[str] = Field(
+        None,
+        description="Optional PDF file name. When provided, retrieval is limited to that document."
+    )
     user_id: Optional[str] = Field(None, description="Optional user identifier for tracking")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Optional additional context")
 
@@ -44,6 +48,7 @@ class QueryRequest(BaseModel):
                 "question": "What is machine learning?",
                 "session_id": "session_12345",
                 "top_k": 5,
+                "source_file": "document.pdf",
                 "user_id": "user_67890",
                 "metadata": {"source": "web_app"}
             }

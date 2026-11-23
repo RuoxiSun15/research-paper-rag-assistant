@@ -13,6 +13,7 @@ from azure.core.credentials import AzureKeyCredential
 
 from config import get_config
 from src.data_pipeline.embedder import Embedder
+from src.retrieval.filters import build_source_file_filter
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +61,8 @@ class AzureSearchRetriever:
         )
 
     def retrieve(self, query: str, top_k: int = None,
-                 use_hybrid: bool = True) -> List[Dict[str, Any]]:
+                 use_hybrid: bool = True,
+                 source_file: str = None) -> List[Dict[str, Any]]:
         """
         Retrieve relevant documents for a query.
 
@@ -69,6 +71,7 @@ class AzureSearchRetriever:
             top_k: Number of results to retrieve (overrides default)
             use_hybrid: If True, use hybrid search (vector + keyword).
                        If False, use vector search only.
+            source_file: If provided, only retrieve chunks from this PDF.
 
         Returns:
             List of retrieved documents with metadata and scores
@@ -80,10 +83,12 @@ class AzureSearchRetriever:
             raise ValueError("Query cannot be empty")
 
         k = top_k or self.top_k
+        filter_expr = build_source_file_filter(source_file)
 
         logger.info(
             f"Retrieving documents for query: '{query[:50]}...' "
-            f"(top_k={k}, hybrid={use_hybrid})"
+            f"(top_k={k}, hybrid={use_hybrid}, "
+            f"source_file={source_file or 'all'})"
         )
 
         try:
@@ -105,6 +110,7 @@ class AzureSearchRetriever:
                 results = self.search_client.search(
                     search_text=query,  # Keyword search
                     vector_queries=[vector_query],  # Vector search
+                    filter=filter_expr,
                     top=k,
                     select=["id", "content", "source_file", "chunk_index", "metadata"]
                 )
@@ -114,6 +120,7 @@ class AzureSearchRetriever:
                 results = self.search_client.search(
                     search_text=None,  # No keyword search
                     vector_queries=[vector_query],
+                    filter=filter_expr,
                     top=k,
                     select=["id", "content", "source_file", "chunk_index", "metadata"]
                 )

@@ -38,6 +38,8 @@ def get_telemetry_client() -> TelemetryClient:
 
     if _telemetry_client is None:
         config = get_config()
+        if not config.app_insights_connection_string:
+            raise RuntimeError("Azure Application Insights is not configured")
         _telemetry_client = TelemetryClient(config.app_insights_connection_string)
 
     return _telemetry_client
@@ -71,16 +73,19 @@ def setup_logging(log_level: int = logging.INFO) -> logging.Logger:
     console_handler.setFormatter(console_formatter)
     logger.addHandler(console_handler)
 
-    # Azure Application Insights handler
-    try:
-        azure_handler = AzureLogHandler(
-            connection_string=config.app_insights_connection_string
-        )
-        azure_handler.setLevel(log_level)
-        logger.addHandler(azure_handler)
-        logger.info("Azure Application Insights logging enabled")
-    except Exception as e:
-        logger.warning(f"Failed to enable Azure Application Insights: {e}")
+    # Azure Application Insights handler (optional for local development)
+    if config.app_insights_connection_string:
+        try:
+            azure_handler = AzureLogHandler(
+                connection_string=config.app_insights_connection_string
+            )
+            azure_handler.setLevel(log_level)
+            logger.addHandler(azure_handler)
+            logger.info("Azure Application Insights logging enabled")
+        except Exception as e:
+            logger.warning(f"Failed to enable Azure Application Insights: {e}")
+    else:
+        logger.info("Azure Application Insights not configured; using console logging")
 
     return logger
 

@@ -1,6 +1,15 @@
-# Multi-Agent RAG System with Azure Services
+# Research Paper RAG Assistant
 
-A production-ready Multi-Agent RAG (Retrieval-Augmented Generation) system built with Azure services, featuring a complete data pipeline, multi-agent collaboration using LangGraph, and FastAPI backend.
+An Azure-based research-paper assistant that uploads PDFs, indexes their
+content, and answers questions with a multi-agent RAG workflow. The current
+`v0.1` milestone supports text extraction and paper-specific retrieval. Formula,
+figure, chart, and table understanding are planned as incremental multimodal
+extensions.
+
+> This project is an independent extension of
+> [`dukewillbe185/multiagent-rag`](https://github.com/dukewillbe185/multiagent-rag).
+> The original architecture and contributors are credited in
+> [Acknowledgments](#acknowledgments).
 
 ## Table of Contents
 
@@ -17,6 +26,7 @@ A production-ready Multi-Agent RAG (Retrieval-Augmented Generation) system built
 - [API Documentation](#api-documentation)
 - [Project Structure](#project-structure)
 - [Security Considerations](#security-considerations)
+- [Roadmap](#roadmap)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
 
@@ -28,6 +38,7 @@ This project implements a sophisticated RAG system that:
 3. Generates embeddings using Azure AI Foundry (text-embedding-ada-002)
 4. Indexes documents in Azure AI Search with hybrid search capabilities
 5. Answers questions using a 3-agent workflow powered by LangGraph and GPT-4
+6. Optionally limits retrieval to one selected paper using `source_file`
 
 ## Architecture
 
@@ -120,6 +131,22 @@ PDF Document
 - **CLI Tools** - Command-line interface for all operations
 - **Security** - Environment-based configuration, no hardcoded secrets
 - **Background Tasks** - Automatic session cleanup every 5 minutes
+
+### Paper-Specific Retrieval
+- **Single-paper filtering** - Restrict retrieval and answer generation to one uploaded PDF
+- **Safe OData filtering** - Escapes apostrophes in filenames before querying Azure AI Search
+- **Full-corpus mode** - Omit `source_file` to search across all indexed papers
+
+## Roadmap
+
+- [x] PDF upload and text-based RAG
+- [x] Paper-specific retrieval using `source_file`
+- [x] Unit tests for source-file filter generation
+- [ ] Formula extraction with LaTeX and page metadata
+- [ ] Figure detection and cropped-image storage
+- [ ] Multimodal chart and diagram understanding
+- [ ] Table-aware retrieval and export
+- [ ] Retrieval evaluation (Precision@K, Recall@K, and MRR)
 
 ## Technology Stack
 
@@ -715,6 +742,10 @@ For issues and questions:
 
 ## Acknowledgments
 
+- Based on the original
+  [`dukewillbe185/multiagent-rag`](https://github.com/dukewillbe185/multiagent-rag)
+  project and extended with paper-specific retrieval and a multimodal research
+  assistant roadmap
 - Built with LangChain and LangGraph
 - Powered by Azure AI services
 - FastAPI for REST API

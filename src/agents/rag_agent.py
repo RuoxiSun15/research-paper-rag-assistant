@@ -27,6 +27,7 @@ class RagState(TypedDict):
     session_id: str
     user_id: str
     current_question: str
+    source_file: str
 
     # Conversation memory (previous turn only)
     previous_question: str
@@ -220,6 +221,7 @@ class SupervisorRetrievalAgent(BaseAgent):
             Updated state with retrieved chunks
         """
         question = state["current_question"]
+        source_file = state.get("source_file", "")
         session_id = state["session_id"]
         turn = state.get("conversation_turn", 1)
 
@@ -227,11 +229,15 @@ class SupervisorRetrievalAgent(BaseAgent):
             try:
                 agent_log.log_action("Retrieving documents from Azure AI Search", {
                     "query": question[:100],
-                    "search_type": "hybrid (vector + keyword)"
+                    "search_type": "hybrid (vector + keyword)",
+                    "source_file": source_file or "all"
                 })
 
                 # Retrieve documents
-                documents = self.retriever.retrieve(question)
+                documents = self.retriever.retrieve(
+                    question,
+                    source_file=source_file or None
+                )
 
                 # Extract chunks and metadata (including chunk_id)
                 chunks = [doc["content"] for doc in documents]
@@ -597,12 +603,13 @@ class MultiAgentRAG:
 
         return graph
 
-    def query(self, question: str) -> Dict[str, Any]:
+    def query(self, question: str, source_file: str = None) -> Dict[str, Any]:
         """
         Process a question through the multi-agent workflow.
 
         Args:
             question: User's question
+            source_file: Optional PDF file name used to filter retrieval
 
         Returns:
             Dictionary containing:
@@ -619,11 +626,19 @@ class MultiAgentRAG:
         try:
             # Create initial state
             initial_state = RagState(
-                question=question,
+                session_id="cli-session",
+                user_id="",
+                current_question=question,
+                source_file=source_file or "",
+                previous_question="",
+                previous_answer="",
                 retrieved_chunks=[],
                 retrieved_metadata=[],
                 intent="",
-                answer=""
+                answer="",
+                conversation_turn=1,
+                guardrail_passed=False,
+                guardrail_reason=""
             )
 
             # Run the workflow
@@ -637,7 +652,7 @@ class MultiAgentRAG:
 
             # Prepare response
             response = {
-                "question": result["question"],
+                "question": result["current_question"],
                 "answer": result["answer"],
                 "intent": result["intent"],
                 "chunks_retrieved": len(result.get("retrieved_chunks", [])),
@@ -661,13 +676,15 @@ class MultiAgentRAG:
             }
 
 
-def query_rag_system(question: str, top_k: int = 5) -> Dict[str, Any]:
+def query_rag_system(question: str, top_k: int = 5,
+                     source_file: str = None) -> Dict[str, Any]:
     """
     Convenience function to query the RAG system.
 
     Args:
         question: User's question
         top_k: Number of chunks to retrieve
+        source_file: Optional PDF file name used to filter retrieval
 
     Returns:
         Response dictionary with answer and metadata
@@ -677,7 +694,7 @@ def query_rag_system(question: str, top_k: int = 5) -> Dict[str, Any]:
         >>> print(response["answer"])
     """
     rag_system = MultiAgentRAG(top_k=top_k)
-    return rag_system.query(question)
+    return rag_system.query(question, source_file=source_file)
 
 
 if __name__ == "__main__":

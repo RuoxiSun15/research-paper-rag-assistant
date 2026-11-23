@@ -374,6 +374,7 @@ async def query_documents(request: QueryRequest):
             session_id=session_id,
             user_id=request.user_id or "",
             current_question=question,
+            source_file=request.source_file or "",
             previous_question=previous_question,
             previous_answer=previous_answer,
             retrieved_chunks=[],

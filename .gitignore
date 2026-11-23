@@ -62,5 +62,11 @@ tmp/
 # Uploaded files
 uploads/
 
+# Local research papers and extracted document assets
+# Keep copyrighted/private test documents out of the public repository.
+*.pdf
+figures/
+extracted_assets/
+
 # local secret backups
 .env.old-backup*
