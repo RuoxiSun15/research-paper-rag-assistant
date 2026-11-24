@@ -8,11 +8,14 @@ IMPORTANT: This uses Azure AI Foundry endpoints, NOT Azure OpenAI Service.
 """
 
 import logging
+import json
+import urllib.error
+import urllib.request
 from typing import List, Dict, Any
 import time
-from openai import AzureOpenAI
 
 from config import get_config
+from src.utils.azure_cli_credential import AzureCliCredentialLite
 
 logger = logging.getLogger(__name__)
 
@@ -37,21 +40,19 @@ class Embedder:
 
     # Batch size for embedding API calls (Azure OpenAI limit)
     MAX_BATCH_SIZE = 16
+    BATCH_DELAY_SECONDS = 0.1
 
     def __init__(self):
         """Initialize the Azure AI Foundry embedding client."""
         config = get_config()
 
         try:
-            # IMPORTANT: Using Azure AI Foundry endpoint and credentials
-            # This is different from Azure OpenAI Service
-            self.client = AzureOpenAI(
-                azure_endpoint=config.ai_foundry_embedding_endpoint,
-                api_key=config.ai_foundry_embedding_key,
-                api_version=config.ai_foundry_embedding_api_version
-            )
-
+            self.endpoint = config.ai_foundry_embedding_endpoint.rstrip("/")
             self.deployment_name = config.ai_foundry_embedding_deployment
+            self.api_version = config.ai_foundry_embedding_api_version
+            self.api_key = config.ai_foundry_embedding_key
+            self.use_azure_cli = config.ai_foundry_embedding_use_azure_cli
+            self.credential = AzureCliCredentialLite() if self.use_azure_cli else None
 
             logger.info(
                 f"Embedder initialized with Azure AI Foundry deployment: {self.deployment_name}"
@@ -61,6 +62,70 @@ class Embedder:
         except Exception as e:
             logger.error(f"Failed to initialize Embedder: {e}")
             raise EmbeddingError(f"Initialization failed: {e}")
+
+    def _create_embeddings(self, texts: List[str]) -> List[List[float]]:
+        """Call the Azure embeddings REST endpoint without persisting secrets."""
+        url = (
+            f"{self.endpoint}/openai/deployments/{self.deployment_name}"
+            f"/embeddings?api-version={self.api_version}"
+        )
+        headers = {"Content-Type": "application/json"}
+        if self.use_azure_cli:
+            token = self.credential.get_token(
+                "https://cognitiveservices.azure.com/.default"
+            )
+            headers["Authorization"] = f"Bearer {token.token}"
+        else:
+            headers["api-key"] = self.api_key
+
+        body = json.dumps({
+            "input": texts,
+            "model": self.deployment_name,
+            "dimensions": self.EMBEDDING_DIMENSION,
+        }).encode("utf-8")
+        for attempt in range(6):
+            request = urllib.request.Request(
+                url,
+                data=body,
+                headers=headers,
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=90) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                details = exc.read().decode("utf-8", errors="replace")
+                if exc.code != 429 or attempt == 5:
+                    raise EmbeddingError(
+                        f"Embedding service returned HTTP {exc.code}: {details}"
+                    ) from exc
+                retry_after = exc.headers.get("Retry-After")
+                # Azure's rolling window can still be closed at the exact
+                # Retry-After boundary, so leave a small safety margin.
+                wait_seconds = (int(retry_after) if retry_after else 60) + 10
+                logger.warning(
+                    "Embedding rate limit reached; retrying batch in %ss",
+                    wait_seconds,
+                )
+                time.sleep(wait_seconds)
+            except urllib.error.URLError as exc:
+                if attempt == 5:
+                    raise EmbeddingError(
+                        f"Embedding service connection failed: {exc}"
+                    ) from exc
+                wait_seconds = 5 * (attempt + 1)
+                logger.warning(
+                    "Temporary embedding connection error; retrying in %ss: %s",
+                    wait_seconds,
+                    exc,
+                )
+                time.sleep(wait_seconds)
+
+        return [
+            item["embedding"]
+            for item in sorted(payload["data"], key=lambda item: item["index"])
+        ]
 
     def embed_text(self, text: str) -> List[float]:
         """
@@ -79,12 +144,7 @@ class Embedder:
             raise ValueError("Text cannot be empty")
 
         try:
-            response = self.client.embeddings.create(
-                model=self.deployment_name,
-                input=text
-            )
-
-            embedding = response.data[0].embedding
+            embedding = self._create_embeddings([text])[0]
 
             # Validate embedding dimension
             if len(embedding) != self.EMBEDDING_DIMENSION:
@@ -132,13 +192,7 @@ class Embedder:
 
             try:
                 # Call Azure AI Foundry embedding API
-                response = self.client.embeddings.create(
-                    model=self.deployment_name,
-                    input=batch
-                )
-
-                # Extract embeddings from response
-                batch_embeddings = [item.embedding for item in response.data]
+                batch_embeddings = self._create_embeddings(batch)
 
                 # Validate all embeddings
                 for idx, embedding in enumerate(batch_embeddings):
@@ -150,9 +204,9 @@ class Embedder:
 
                 all_embeddings.extend(batch_embeddings)
 
-                # Small delay to avoid rate limiting
+                # Configurable delay for low-quota Azure deployments.
                 if i + self.MAX_BATCH_SIZE < len(texts):
-                    time.sleep(0.1)
+                    time.sleep(self.BATCH_DELAY_SECONDS)
 
             except Exception as e:
                 logger.error(f"Error in batch {batch_num}: {e}")

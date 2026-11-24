@@ -1,0 +1,10 @@
+[
+  {
+    "id": "replace-with-a-meaningful-case-id",
+    "question": "Replace this with a question whose answer is in your paper.",
+    "source_file": "replace-with-paper-name.pdf",
+    "relevant_chunk_ids": [
+      "replace-with-the-correct-indexed-chunk-id"
+    ]
+  }
+]

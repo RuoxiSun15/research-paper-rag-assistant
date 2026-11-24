@@ -1,0 +1,53 @@
+[
+  {
+    "id": "timegru-architecture",
+    "question": "What is the main architectural difference between 2Gated-TimeGRU and a traditional GRU?",
+    "source_file": "TimeGRU.pdf",
+    "relevant_chunk_ids": [
+      "TimeGRU_pdf_chunk_9",
+      "TimeGRU_pdf_chunk_10"
+    ],
+    "reference_answer": "2Gated-TimeGRU augments the GRU architecture with past and future time-aware gates so that hidden-state updates reflect intervals between interactions."
+  },
+  {
+    "id": "timegru-gate-meaning",
+    "question": "What do the past time gate and future time gate represent in 2Gated-TimeGRU?",
+    "source_file": "TimeGRU.pdf",
+    "relevant_chunk_ids": [
+      "TimeGRU_pdf_chunk_10"
+    ],
+    "reference_answer": "The past gate represents the interval between consecutive historical interactions, while the future gate represents the interval between the current interaction and the following timestamp."
+  },
+  {
+    "id": "timegru-experiment-setup",
+    "question": "Which datasets, data split, and evaluation metrics were used in the experiments?",
+    "source_file": "TimeGRU.pdf",
+    "relevant_chunk_ids": [
+      "TimeGRU_pdf_chunk_30",
+      "TimeGRU_pdf_chunk_31",
+      "TimeGRU_pdf_chunk_32",
+      "TimeGRU_pdf_chunk_33"
+    ],
+    "reference_answer": "The experiments used MovieLens-1M and MovieLens-20M. Each user sequence was split chronologically into 80% training data, with the remainder divided evenly between validation and test data. Metrics included Precision@K, MAE, and RMSE."
+  },
+  {
+    "id": "timegru-error-results",
+    "question": "What MAE and RMSE results did 2Gated-TimeGRU achieve on MovieLens-1M and MovieLens-20M?",
+    "source_file": "TimeGRU.pdf",
+    "relevant_chunk_ids": [
+      "TimeGRU_pdf_chunk_36",
+      "TimeGRU_pdf_chunk_37"
+    ],
+    "reference_answer": "For MovieLens-1M, MAE was 0.7994 and RMSE was 1.0359. For MovieLens-20M, MAE was 0.6469 and RMSE was 0.8963."
+  },
+  {
+    "id": "timegru-limitations",
+    "question": "What limitations of 2Gated-TimeGRU are identified by the authors?",
+    "source_file": "TimeGRU.pdf",
+    "relevant_chunk_ids": [
+      "TimeGRU_pdf_chunk_44",
+      "TimeGRU_pdf_chunk_45"
+    ],
+    "reference_answer": "The model assumes preferences remain stable over short intervals, was evaluated only in the movie domain, and models preferences at item level rather than the finer-grained item-feature level."
+  }
+]

@@ -1,13 +1,7 @@
-"""
-Text Chunking Module using LangChain's RecursiveCharacterTextSplitter.
-
-This module splits long text documents into smaller, overlapping chunks
-suitable for embedding and retrieval.
-"""
+"""Split documents into small, overlapping chunks for retrieval."""
 
 import logging
 from typing import List, Dict, Any
-from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 from config import get_config
 
@@ -21,7 +15,7 @@ class TextChunkingError(Exception):
 
 class TextChunker:
     """
-    Splits text into overlapping chunks using LangChain's RecursiveCharacterTextSplitter.
+    Splits text into overlapping chunks at natural text boundaries.
 
     The splitter tries to split on natural boundaries (paragraphs, sentences, words)
     while maintaining the specified chunk size and overlap.
@@ -45,14 +39,6 @@ class TextChunker:
 
         # Calculate overlap in characters
         self.chunk_overlap = int(self.chunk_size * self.chunk_overlap_ratio)
-
-        # Initialize LangChain splitter
-        self.splitter = RecursiveCharacterTextSplitter(
-            chunk_size=self.chunk_size,
-            chunk_overlap=self.chunk_overlap,
-            length_function=len,
-            separators=["\n\n", "\n", ". ", " ", ""]  # Try to split on natural boundaries
-        )
 
         logger.info(
             f"TextChunker initialized with chunk_size={self.chunk_size}, "
@@ -83,8 +69,7 @@ class TextChunker:
         logger.info(f"Starting text chunking. Input length: {len(text)} characters")
 
         try:
-            # Split text using LangChain splitter
-            text_chunks = self.splitter.split_text(text)
+            text_chunks = self._split_text(text)
 
             logger.info(f"Text split into {len(text_chunks)} chunks")
 
@@ -124,6 +109,38 @@ class TextChunker:
         except Exception as e:
             logger.error(f"Error chunking text: {e}")
             raise TextChunkingError(f"Chunking failed: {e}")
+
+    def _split_text(self, text: str) -> List[str]:
+        """Split text at natural boundaries with a fixed overlap.
+
+        Keeping this operation local avoids loading the full LangChain package
+        during ingestion while preserving the same chunk-size contract.
+        """
+        chunks = []
+        start = 0
+        text_length = len(text)
+        separators = ("\n\n", "\n", ". ", " ")
+
+        while start < text_length:
+            hard_end = min(start + self.chunk_size, text_length)
+            end = hard_end
+            if hard_end < text_length:
+                minimum_break = start + max(1, self.chunk_size // 2)
+                for separator in separators:
+                    candidate = text.rfind(separator, minimum_break, hard_end)
+                    if candidate >= 0:
+                        end = candidate + len(separator)
+                        break
+
+            chunk = text[start:end].strip()
+            if chunk:
+                chunks.append(chunk)
+            if end >= text_length:
+                break
+            next_start = max(0, end - self.chunk_overlap)
+            start = next_start if next_start > start else end
+
+        return chunks
 
     def _generate_chunk_id(self, metadata: Dict[str, Any], chunk_index: int) -> str:
         """

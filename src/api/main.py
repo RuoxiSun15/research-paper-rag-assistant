@@ -6,9 +6,11 @@ This is the main entry point for the REST API server.
 
 import logging
 import asyncio
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from src.api.routes import router
 from src.monitoring.logger import setup_logging
@@ -62,6 +64,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
+app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 
 
 async def session_cleanup_task():
@@ -176,14 +181,8 @@ app.include_router(router, prefix="/api/v1", tags=["Multi-Agent RAG"])
 # Root endpoint
 @app.get("/", tags=["Root"])
 async def root():
-    """Root endpoint with API information."""
-    return {
-        "name": "Multi-Agent RAG System API",
-        "version": "1.0.0",
-        "status": "running",
-        "documentation": "/docs",
-        "health_check": "/api/v1/health"
-    }
+    """Serve the PaperLens research reading interface."""
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 # Global exception handler

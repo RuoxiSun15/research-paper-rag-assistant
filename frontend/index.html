@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A transparent research paper reading assistant powered by retrieval-augmented generation.">
+  <title>PaperLens · Research Paper Assistant</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="PaperLens home">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32"><path d="M8 5.5h11.5L25 11v15.5H8z"/><path d="M19.5 5.5V11H25M12 16h9M12 20h7"/></svg>
+        </span>
+        <span><strong>PaperLens</strong><small>Research paper assistant</small></span>
+      </a>
+      <div class="system-state">
+        <span class="status-dot" id="status-dot"></span>
+        <span id="system-status">Connecting to research index</span>
+      </div>
+      <nav class="top-actions" aria-label="Utility navigation">
+        <a href="/docs" target="_blank">API reference</a>
+        <button class="icon-button" id="theme-toggle" type="button" aria-label="Toggle theme">
+          <svg viewBox="0 0 24 24"><path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4"/></svg>
+        </button>
+      </nav>
+    </header>
+
+    <main class="workspace">
+      <aside class="library-panel panel">
+        <div class="panel-heading">
+          <div><span class="eyebrow">Workspace</span><h2>Paper library</h2></div>
+          <span class="count-pill" id="paper-count">0</span>
+        </div>
+
+        <label class="upload-zone" id="upload-zone" for="pdf-input">
+          <input id="pdf-input" type="file" accept="application/pdf,.pdf" hidden>
+          <span class="upload-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4 4 4M5 14v5h14v-5"/></svg>
+          </span>
+          <strong>Import a paper</strong>
+          <span>Choose or drop a PDF</span>
+        </label>
+
+        <div class="library-label"><span>Indexed papers</span><button id="refresh-docs" type="button">Refresh</button></div>
+        <div class="document-list" id="document-list">
+          <div class="skeleton-card"></div><div class="skeleton-card"></div>
+        </div>
+
+        <div class="library-footnote">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 10v6m0-9v.2"/></svg>
+          <span>Select a paper to keep every answer grounded in that source.</span>
+        </div>
+      </aside>
+
+      <section class="conversation-panel panel">
+        <div class="conversation-header">
+          <div>
+            <span class="eyebrow">Active paper</span>
+            <h1 id="active-title">Select a paper to begin</h1>
+          </div>
+          <div class="document-badge" id="active-badge"><span></span>No paper selected</div>
+        </div>
+
+        <div class="conversation" id="conversation" aria-live="polite">
+          <section class="empty-state" id="empty-state">
+            <div class="orb" aria-hidden="true"><span></span><span></span><span></span></div>
+            <span class="eyebrow">Grounded answers</span>
+            <h2>Read the paper.<br>Trace every answer.</h2>
+            <p>Ask across text, equations, and figures. PaperLens shows the exact Top‑K evidence behind every response.</p>
+            <div class="suggestion-grid">
+              <button type="button" data-question="Summarize the paper's three main contributions."><span>SUMMARY</span>What are the core contributions?</button>
+              <button type="button" data-question="Explain the proposed method and its overall workflow."><span>METHOD</span>How does the method work?</button>
+              <button type="button" data-question="Explain the key equations in this paper."><span>EQUATIONS</span>Explain the mathematical notation</button>
+              <button type="button" data-question="What do the main figures and charts show?"><span>FIGURES</span>Interpret the visual evidence</button>
+            </div>
+          </section>
+        </div>
+
+        <form class="composer" id="query-form">
+          <textarea id="question-input" rows="1" placeholder="Select a paper, then ask a question…" aria-label="Ask a question" disabled></textarea>
+          <div class="composer-bottom">
+            <div class="query-options">
+              <label>Top‑K
+                <select id="top-k"><option>3</option><option selected>5</option><option>8</option><option>10</option></select>
+              </label>
+              <span id="scope-label">Scope: no paper selected</span>
+            </div>
+            <button class="send-button" id="send-button" type="submit" disabled>
+              <span>Ask</span><svg viewBox="0 0 24 24"><path d="m4 5 16 7-16 7 3-7z"/><path d="M7 12h13"/></svg>
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="evidence-panel panel">
+        <div class="panel-heading evidence-heading">
+          <div><span class="eyebrow">Retrieval trace</span><h2>Evidence inspector</h2></div>
+          <span class="trace-badge">Top‑K</span>
+        </div>
+
+        <div class="pipeline-card">
+          <div class="pipeline-title"><span>RAG pipeline</span><small id="pipeline-time">Waiting for a query</small></div>
+          <div class="pipeline-steps">
+            <span><i>1</i>Embed query</span><b></b><span><i>2</i>Hybrid search</span><b></b><span><i>3</i>Generate</span>
+          </div>
+        </div>
+
+        <div class="evidence-summary" id="evidence-summary">
+          <span>No retrieval trace yet</span>
+          <p>Matched passages, content type, page, and relevance will appear here.</p>
+        </div>
+        <div class="evidence-list" id="evidence-list"></div>
+      </aside>
+    </main>
+  </div>
+
+  <div class="processing-overlay" id="processing-overlay" hidden>
+    <div class="processing-dialog" role="dialog" aria-modal="true" aria-labelledby="processing-title">
+      <div class="processing-visual"><span></span><span></span><span></span></div>
+      <span class="eyebrow">Document pipeline</span>
+      <h2 id="processing-title">Understanding your paper</h2>
+      <p id="processing-file"></p>
+      <div class="progress-track"><span id="progress-bar"></span></div>
+      <ol class="processing-steps" id="processing-steps">
+        <li class="active">Read layout</li><li>Parse equations & figures</li><li>Create embeddings</li><li>Index evidence</li>
+      </ol>
+      <small>Complex papers may take a few minutes. Keep this page open.</small>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

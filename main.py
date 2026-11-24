@@ -10,24 +10,28 @@ This script provides a command-line interface for:
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
 
 from src.data_pipeline.document_extractor import DocumentExtractor
 from src.data_pipeline.formula_parser import build_formula_chunks
+from src.data_pipeline.figure_parser import build_figure_chunks
+from src.data_pipeline.vision_analyzer import VisionAnalyzer
 from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
 from src.retrieval.retriever import AzureSearchRetriever
-from src.agents.rag_agent import MultiAgentRAG
-from src.monitoring.logger import setup_logging
 from config import get_config, ConfigurationError
 
 
 def setup_cli_logging():
-    """Setup logging for CLI."""
-    setup_logging(logging.INFO)
+    """Set up lightweight console logging for CLI commands."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
     return logging.getLogger(__name__)
 
 
@@ -58,6 +62,12 @@ def process_document(pdf_path: str, logger):
 
         logger.info(f"✓ Extracted {len(extracted_text)} characters from {extraction_result['page_count']} pages")
         logger.info(f"✓ Detected {len(extraction_result.get('formulas', []))} formulas")
+        logger.info(f"✓ Detected {len(extraction_result.get('figures', []))} figures")
+        if get_config().vision_analysis_enabled:
+            logger.info("Analyzing extracted figures with the vision model...")
+            extraction_result["figures"] = VisionAnalyzer().analyze_figures(
+                extraction_result.get("figures", [])
+            )
 
         # Step 2: Chunk text
         logger.info("\n[2/5] Chunking text...")
@@ -69,10 +79,17 @@ def process_document(pdf_path: str, logger):
             start_index=len(chunks),
         )
         chunks.extend(formula_chunks)
+        figure_chunks = build_figure_chunks(
+            extraction_result.get("figures", []),
+            metadata,
+            start_index=len(chunks),
+        )
+        chunks.extend(figure_chunks)
 
         stats = chunker.get_chunk_statistics(chunks)
         logger.info(f"✓ Created {stats['total_chunks']} chunks")
         logger.info(f"  - Formula chunks: {len(formula_chunks)}")
+        logger.info(f"  - Figure chunks: {len(figure_chunks)}")
         logger.info(f"  - Avg size: {stats['avg_chunk_size']:.0f} chars")
         logger.info(f"  - Min/Max: {stats['min_chunk_size']}/{stats['max_chunk_size']}")
 
@@ -109,6 +126,7 @@ def process_document(pdf_path: str, logger):
         logger.info(f"Chunks created: {len(chunks)}")
         logger.info(f"Chunks indexed: {result['indexed']}")
         logger.info(f"Formulas detected: {len(extraction_result.get('formulas', []))}")
+        logger.info(f"Figures detected: {len(extraction_result.get('figures', []))}")
         logger.info("=" * 60)
 
     except Exception as e:
@@ -169,6 +187,10 @@ def test_query(question: str, top_k: int, logger, source_file: str = None):
     logger.info(f"Source file: {source_file or 'All indexed documents'}")
 
     try:
+        # The agent stack is optional for processing and index commands, so
+        # import it only when an actual multi-agent query is requested.
+        from src.agents.rag_agent import MultiAgentRAG
+
         rag_system = MultiAgentRAG(top_k=top_k)
         response = rag_system.query(question, source_file=source_file)
 
@@ -246,6 +268,26 @@ def manage_index(action: str, logger):
         sys.exit(1)
 
 
+def evaluate_system(dataset: str, top_k: int, faithfulness: bool,
+                    output: str, case_delay: float, logger):
+    """Run labelled retrieval metrics and optional answer faithfulness."""
+    from src.evaluation.runner import run_evaluation, save_report
+
+    logger.info("Running %s evaluation at top_k=%s",
+                "retrieval + faithfulness" if faithfulness else "retrieval",
+                top_k)
+    report = run_evaluation(
+        dataset,
+        top_k=top_k,
+        include_faithfulness=faithfulness,
+        case_delay_seconds=case_delay,
+    )
+    saved = save_report(report, output)
+    print("\nEvaluation summary")
+    print(json.dumps(report["summary"], indent=2))
+    print(f"\nFull report: {saved}")
+
+
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -266,6 +308,10 @@ Examples:
   python main.py index status
   python main.py index create
   python main.py index delete
+
+  # Evaluate retrieval, then optionally answer faithfulness
+  python main.py evaluate evaluation/my_dataset.json --top-k 5
+  python main.py evaluate evaluation/my_dataset.json --top-k 5 --faithfulness
         """
     )
 
@@ -301,6 +347,28 @@ Examples:
         help="Index action"
     )
 
+    evaluation_parser = subparsers.add_parser(
+        "evaluate", help="Evaluate retrieval and answer quality"
+    )
+    evaluation_parser.add_argument("dataset", help="JSON or JSONL labelled dataset")
+    evaluation_parser.add_argument("--top-k", type=int, default=5)
+    evaluation_parser.add_argument(
+        "--faithfulness",
+        action="store_true",
+        help="Also generate answers and score grounding with the Azure chat model",
+    )
+    evaluation_parser.add_argument(
+        "--output",
+        default="evaluation/results/latest.json",
+        help="Path for the JSON report",
+    )
+    evaluation_parser.add_argument(
+        "--case-delay",
+        type=float,
+        default=0.0,
+        help="Seconds to wait between cases for low-quota deployments",
+    )
+
     args = parser.parse_args()
 
     # Setup logging
@@ -327,6 +395,16 @@ Examples:
 
     elif args.command == "index":
         manage_index(args.action, logger)
+
+    elif args.command == "evaluate":
+        evaluate_system(
+            args.dataset,
+            args.top_k,
+            args.faithfulness,
+            args.output,
+            args.case_delay,
+            logger,
+        )
 
     else:
         parser.print_help()

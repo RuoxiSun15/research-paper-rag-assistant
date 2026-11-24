@@ -246,6 +246,8 @@ class SupervisorRetrievalAgent(BaseAgent):
                         "chunk_id": doc.get("id", f"chunk_{i}"),
                         "source_file": doc.get("source_file"),
                         "chunk_index": doc.get("chunk_index"),
+                        "content_type": doc.get("content_type") or "text",
+                        "page_number": doc.get("page_number"),
                         "score": doc.get("score"),
                         "content": doc["content"]
                     }
@@ -656,7 +658,9 @@ class MultiAgentRAG:
                 "answer": result["answer"],
                 "intent": result["intent"],
                 "chunks_retrieved": len(result.get("retrieved_chunks", [])),
-                "sources": sources
+                "sources": sources,
+                "retrieved_chunks": result.get("retrieved_chunks", []),
+                "retrieved_metadata": result.get("retrieved_metadata", []),
             }
 
             logger.info("=" * 60)
@@ -672,7 +676,9 @@ class MultiAgentRAG:
                 "answer": f"Error processing query: {e}",
                 "intent": "error",
                 "chunks_retrieved": 0,
-                "sources": []
+                "sources": [],
+                "retrieved_chunks": [],
+                "retrieved_metadata": [],
             }
 
 

@@ -15,6 +15,8 @@ class ChunkInfo(BaseModel):
     score: float = Field(..., description="Search score (vector similarity + BM25 if hybrid)")
     content_preview: str = Field(..., description="First 200 characters of the chunk")
     full_content: str = Field(..., description="Full chunk text for transparency")
+    content_type: str = Field("text", description="text, formula, or figure")
+    page_number: Optional[int] = Field(None, description="Page number when available")
 
     class Config:
         json_schema_extra = {
@@ -63,6 +65,8 @@ class UploadResponse(BaseModel):
     chunks_created: int = Field(..., description="Number of chunks created")
     chunks_indexed: int = Field(..., description="Number of chunks indexed")
     formulas_detected: int = Field(0, description="Number of mathematical formulas detected")
+    figures_detected: int = Field(0, description="Number of figures detected and extracted")
+    figures_analyzed: int = Field(0, description="Number of figures interpreted by the vision model")
     processing_time_seconds: float = Field(..., description="Total processing time")
 
     class Config:
@@ -74,6 +78,8 @@ class UploadResponse(BaseModel):
                 "chunks_created": 25,
                 "chunks_indexed": 25,
                 "formulas_detected": 8,
+                "figures_detected": 3,
+                "figures_analyzed": 3,
                 "processing_time_seconds": 12.5
             }
         }

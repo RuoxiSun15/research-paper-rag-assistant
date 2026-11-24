@@ -12,22 +12,13 @@ import logging
 import time
 import functools
 from typing import Callable, Any, Dict
-from opencensus.ext.azure.log_exporter import AzureLogHandler
-from opencensus.ext.azure import metrics_exporter
-from opencensus.stats import aggregation as aggregation_module
-from opencensus.stats import measure as measure_module
-from opencensus.stats import stats as stats_module
-from opencensus.stats import view as view_module
-from opencensus.tags import tag_map as tag_map_module
-from applicationinsights import TelemetryClient
-
 from config import get_config
 
 # Global telemetry client
 _telemetry_client = None
 
 
-def get_telemetry_client() -> TelemetryClient:
+def get_telemetry_client() -> Any:
     """
     Get the global Application Insights telemetry client.
 
@@ -37,6 +28,10 @@ def get_telemetry_client() -> TelemetryClient:
     global _telemetry_client
 
     if _telemetry_client is None:
+        # Keep the legacy SDK optional so local API startup does not load its
+        # large dependency tree unless telemetry is actually used.
+        from applicationinsights import TelemetryClient
+
         config = get_config()
         if not config.app_insights_connection_string:
             raise RuntimeError("Azure Application Insights is not configured")
@@ -74,8 +69,14 @@ def setup_logging(log_level: int = logging.INFO) -> logging.Logger:
     logger.addHandler(console_handler)
 
     # Azure Application Insights handler (optional for local development)
-    if config.app_insights_connection_string:
+    app_insights_logging_enabled = (
+        config.get_optional_env("ENABLE_APP_INSIGHTS_LOGGING", "false").lower()
+        == "true"
+    )
+    if config.app_insights_connection_string and app_insights_logging_enabled:
         try:
+            from opencensus.ext.azure.log_exporter import AzureLogHandler
+
             azure_handler = AzureLogHandler(
                 connection_string=config.app_insights_connection_string
             )
@@ -85,7 +86,7 @@ def setup_logging(log_level: int = logging.INFO) -> logging.Logger:
         except Exception as e:
             logger.warning(f"Failed to enable Azure Application Insights: {e}")
     else:
-        logger.info("Azure Application Insights not configured; using console logging")
+        logger.info("Using console logging; Application Insights logging is disabled")
 
     return logger
 
