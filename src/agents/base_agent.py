@@ -1,153 +1,81 @@
-"""
-Base Agent Module.
+"""Shared Azure chat-completion behavior for the project's agents."""
 
-Provides base functionality for all agents in the multi-agent system.
-"""
-
+import json
 import logging
-from typing import Dict, Any, Optional
-from langchain_openai import AzureChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+import urllib.error
+import urllib.request
+from typing import Any, Dict
 
 from config import get_config
+from src.utils.azure_cli_credential import AzureCliCredentialLite
 
 logger = logging.getLogger(__name__)
 
 
 class BaseAgent:
-    """
-    Base class for all agents.
-
-    Provides common functionality:
-    - Azure AI Foundry LLM client initialization
-    - Logging
-    - Error handling
-    """
+    """Base class for agents that invoke the configured Azure chat model."""
 
     def __init__(self, agent_name: str, system_prompt: str = None):
-        """
-        Initialize base agent.
-
-        Args:
-            agent_name: Name of the agent (for logging)
-            system_prompt: Optional system prompt for the agent
-        """
         self.agent_name = agent_name
         self.system_prompt = system_prompt
-        self.llm = self._initialize_llm()
-
-        logger.info(f"[{self.agent_name}] Agent initialized")
-
-    def _initialize_llm(self) -> AzureChatOpenAI:
-        """
-        Initialize Azure AI Foundry LLM client.
-
-        Returns:
-            Configured AzureChatOpenAI instance
-
-        Note:
-            Uses Azure AI Foundry endpoint, NOT Azure OpenAI Service
-        """
         config = get_config()
-
-        try:
-            llm = AzureChatOpenAI(
-                azure_endpoint=config.ai_foundry_gpt4_endpoint,
-                azure_deployment=config.ai_foundry_gpt4_deployment,
-                api_key=config.ai_foundry_gpt4_key,
-                api_version=config.ai_foundry_gpt4_api_version,
-                temperature=config.llm_temperature
-            )
-
-            logger.info(
-                f"[{self.agent_name}] LLM initialized with deployment: "
-                f"{config.ai_foundry_gpt4_deployment}"
-            )
-
-            return llm
-
-        except Exception as e:
-            logger.error(f"[{self.agent_name}] Failed to initialize LLM: {e}")
-            raise
+        self.endpoint = config.ai_foundry_gpt4_endpoint.rstrip("/")
+        self.deployment_name = config.ai_foundry_gpt4_deployment
+        self.api_version = config.ai_foundry_gpt4_api_version
+        self.api_key = config.ai_foundry_gpt4_key
+        self.use_azure_cli = config.ai_foundry_gpt4_use_azure_cli
+        self.credential = AzureCliCredentialLite() if self.use_azure_cli else None
+        self.temperature = config.llm_temperature
+        logger.info("[%s] Agent initialized", self.agent_name)
 
     def invoke_llm(self, user_message: str, system_message: str = None) -> str:
-        """
-        Invoke the LLM with a message.
+        messages = []
+        effective_system = system_message or self.system_prompt
+        if effective_system:
+            messages.append({"role": "system", "content": effective_system})
+        messages.append({"role": "user", "content": user_message})
 
-        Args:
-            user_message: User/human message
-            system_message: Optional system message (overrides default)
+        url = (
+            f"{self.endpoint}/openai/deployments/{self.deployment_name}"
+            f"/chat/completions?api-version={self.api_version}"
+        )
+        headers = {"Content-Type": "application/json"}
+        if self.use_azure_cli:
+            token = self.credential.get_token(
+                "https://cognitiveservices.azure.com/.default"
+            )
+            headers["Authorization"] = f"Bearer {token.token}"
+        else:
+            headers["api-key"] = self.api_key
 
-        Returns:
-            LLM response text
-
-        Raises:
-            Exception: If LLM invocation fails
-        """
+        request = urllib.request.Request(
+            url,
+            data=json.dumps({
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": 1200,
+            }).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
         try:
-            messages = []
-
-            # Add system message
-            sys_msg = system_message or self.system_prompt
-            if sys_msg:
-                messages.append(SystemMessage(content=sys_msg))
-
-            # Add user message
-            messages.append(HumanMessage(content=user_message))
-
-            logger.info(f"[{self.agent_name}] Invoking LLM...")
-
-            # Invoke LLM
-            response = self.llm.invoke(messages)
-
-            logger.info(f"[{self.agent_name}] LLM response received")
-
-            return response.content
-
-        except Exception as e:
-            logger.error(f"[{self.agent_name}] LLM invocation failed: {e}")
-            raise
+            with urllib.request.urlopen(request, timeout=90) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            return payload["choices"][0]["message"]["content"] or ""
+        except urllib.error.HTTPError as exc:
+            details = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Azure chat model returned HTTP {exc.code}: {details}"
+            ) from exc
 
     def execute(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Execute agent logic.
-
-        This should be overridden by subclasses.
-
-        Args:
-            state: Current state dictionary
-
-        Returns:
-            Updated state dictionary
-        """
         raise NotImplementedError("Subclasses must implement execute()")
 
     def log_info(self, message: str, **kwargs):
-        """
-        Log info message with agent name prefix.
-
-        Args:
-            message: Log message
-            **kwargs: Additional structured logging data (e.g., session_id)
-        """
-        logger.info(f"[{self.agent_name}] {message}", extra=kwargs if kwargs else None)
+        logger.info("[%s] %s", self.agent_name, message, extra=kwargs)
 
     def log_warning(self, message: str, **kwargs):
-        """
-        Log warning message with agent name prefix.
-
-        Args:
-            message: Log message
-            **kwargs: Additional structured logging data (e.g., session_id)
-        """
-        logger.warning(f"[{self.agent_name}] {message}", extra=kwargs if kwargs else None)
+        logger.warning("[%s] %s", self.agent_name, message, extra=kwargs)
 
     def log_error(self, message: str, **kwargs):
-        """
-        Log error message with agent name prefix.
-
-        Args:
-            message: Log message
-            **kwargs: Additional structured logging data (e.g., session_id)
-        """
-        logger.error(f"[{self.agent_name}] {message}", extra=kwargs if kwargs else None)
+        logger.error("[%s] %s", self.agent_name, message, extra=kwargs)

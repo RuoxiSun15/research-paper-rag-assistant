@@ -1,756 +1,648 @@
-# Research Paper RAG Assistant
+# PaperLens — Multimodal Research Paper Assistant
 
-An Azure-based research-paper assistant that uploads PDFs, indexes their
-content, and answers questions with a multi-agent RAG workflow. The current
-`v0.1` milestone supports text extraction and paper-specific retrieval. Formula,
-figure, chart, and table understanding are planned as incremental multimodal
-extensions.
+PaperLens is an Azure-powered research reading assistant that turns PDF papers
+into a searchable, explainable knowledge base. It extracts document text,
+mathematical formulas, and figures; creates vector embeddings; retrieves the
+most relevant evidence with hybrid search; and answers questions through a
+multi-agent RAG workflow.
 
-> This project is an independent extension of
+Unlike a generic document chatbot, PaperLens exposes its retrieval trace. Every
+answer can be inspected alongside the Top-K text, equation, and figure chunks
+that supported it.
+
+> This repository is an independent extension of
 > [`dukewillbe185/multiagent-rag`](https://github.com/dukewillbe185/multiagent-rag).
-> The original architecture and contributors are credited in
-> [Acknowledgments](#acknowledgments).
+> See [Acknowledgments](#acknowledgments) for attribution.
 
-## Table of Contents
+## Highlights
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Features](#features)
-- [Technology Stack](#technology-stack)
-- [Prerequisites](#prerequisites)
-- [Installation](#installation)
-- [Configuration](#configuration)
-- [Usage](#usage)
-  - [CLI Interface](#cli-interface)
-  - [FastAPI Server](#fastapi-server)
-- [API Documentation](#api-documentation)
-- [Project Structure](#project-structure)
-- [Security Considerations](#security-considerations)
-- [Roadmap](#roadmap)
-- [Troubleshooting](#troubleshooting)
-- [Contributing](#contributing)
+- **Multimodal PDF ingestion** — extracts text, layout, formulas, and figures
+  with Azure AI Document Intelligence.
+- **Equation-aware retrieval** — stores detected LaTeX, page number, formula
+  type, and confidence as searchable chunks.
+- **Figure understanding** — sends meaningful paper figures to a vision-capable
+  Azure OpenAI deployment and indexes structured visual descriptions.
+- **Decoration filtering** — excludes small publisher logos, buttons, and page
+  ornaments before vision analysis.
+- **Hybrid Top-K search** — combines BM25 keyword search with HNSW vector
+  similarity in Azure AI Search.
+- **Single-paper scope** — optionally restricts retrieval and answer generation
+  to one selected PDF.
+- **Transparent evidence** — returns content type, source file, page number,
+  score, preview, and full retrieved content.
+- **Measured RAG quality** — evaluates labelled questions with Precision@K,
+  Recall@K, MRR, and optional LLM-judged answer faithfulness.
+- **Multi-agent reasoning** — guardrail, retrieval, intent classification, and
+  answer generation are orchestrated with LangGraph.
+- **Conversation memory** — keeps the previous question and answer for follow-up
+  questions within a session.
+- **PaperLens web interface** — provides paper upload, paper selection, chat,
+  processing state, and an Evidence Inspector for Top-K results.
+- **Keyless local development** — supports Azure CLI authentication so secrets
+  do not need to be stored in the repository.
 
-## Overview
+## User Interface
 
-This project implements a sophisticated RAG system that:
-1. Extracts text from PDF documents using Azure AI Document Intelligence
-2. Chunks text using LangChain's RecursiveCharacterTextSplitter
-3. Generates embeddings using Azure AI Foundry (text-embedding-ada-002)
-4. Indexes documents in Azure AI Search with hybrid search capabilities
-5. Answers questions using a 3-agent workflow powered by LangGraph and GPT-4
-6. Optionally limits retrieval to one selected paper using `source_file`
+Run the server and open `http://127.0.0.1:8000` to use PaperLens.
+
+The interface is divided into three clear work areas:
+
+| Area | Purpose |
+| --- | --- |
+| **Paper Library** | Upload PDFs, view indexed papers, and select the active paper. |
+| **Reading Workspace** | Ask questions about methods, equations, figures, results, or limitations. |
+| **Evidence Inspector** | Inspect the Top-K chunks, content type, page number, retrieval score, and full evidence. |
+
+The responsive layout changes the paper library into a compact horizontal
+selector on small screens.
 
 ## Architecture
 
-### Multi-Agent Workflow
+```mermaid
+flowchart LR
+    PDF[PDF paper] --> DI[Azure AI Document Intelligence]
+    DI --> TEXT[Text chunks]
+    DI --> FORMULA[Formula chunks]
+    DI --> FIGURE[Extracted figures]
+    FIGURE --> VISION[Vision Analyzer]
+    VISION --> FIGURE_CHUNKS[Figure-description chunks]
 
-The system uses **LangGraph** to orchestrate a 4-agent workflow with guardrails:
+    TEXT --> EMBED[Embedding deployment]
+    FORMULA --> EMBED
+    FIGURE_CHUNKS --> EMBED
+    EMBED --> SEARCH[Azure AI Search]
 
-```
-User Question
-     ↓
-[Guardrail Agent] → Validates question (relevant/irrelevant/unsafe)
-     ↓ (if passed)
-[Supervisor Retrieval Agent]
-     ↓ (retrieve relevant chunks)
-[Intent Identifier Agent]
-     ↓ (identify user intent)
-[Answer Generator Agent] → Uses conversation memory
-     ↓
-Final Answer
-```
-
-**Agent Roles:**
-1. **Guardrail Agent** - Validates questions before processing (filters irrelevant/unsafe queries)
-2. **Supervisor Retrieval Agent** - Retrieves relevant document chunks from Azure AI Search
-3. **Intent Identifier Agent** - Identifies user's question intent (definition, explanation, etc.)
-4. **Answer Generator Agent** - Generates comprehensive answer using retrieved context and conversation history
-
-### Data Pipeline
-
-```
-PDF Document
-     ↓
-[Azure AI Document Intelligence] → Extract Text
-     ↓
-[LangChain Text Splitter] → Create Chunks (1200 chars, 20% overlap)
-     ↓
-[Azure AI Foundry Embedding] → Generate Vectors (1536-dim)
-     ↓
-[Azure AI Search] → Index with Hybrid Search (Vector + Keyword)
+    QUESTION[User question] --> GUARD[Guardrail Agent]
+    GUARD --> RETRIEVE[Retrieval Agent]
+    SEARCH --> RETRIEVE
+    RETRIEVE --> INTENT[Intent Agent]
+    INTENT --> ANSWER[Answer Agent]
+    ANSWER --> UI[Answer + Top-K evidence]
 ```
 
-## Features
+### Document pipeline
 
-### Core Functionality
-- **PDF Text Extraction** - Azure AI Document Intelligence with Layout model
-- **Intelligent Chunking** - LangChain RecursiveCharacterTextSplitter with configurable size and overlap
-- **Vector Embeddings** - Azure AI Foundry text-embedding-ada-002 (1536 dimensions)
-- **Hybrid Search** - Combines vector similarity and keyword matching (BM25)
-- **Multi-Agent RAG** - LangGraph-powered 4-agent workflow with guardrails
-- **Intent Recognition** - Automatic classification of user intent
-- **Source Citation** - Answers include source references with detailed chunk information
+1. Azure AI Document Intelligence analyzes the PDF with the Layout model.
+2. Text is split into overlapping chunks.
+3. Detected formulas become independent LaTeX-aware chunks.
+4. Extracted figures are filtered to remove small decorative images.
+5. A vision-capable model produces a structured explanation for selected figures.
+6. Text, formula, and figure chunks receive 1,536-dimensional embeddings.
+7. Chunks and metadata are written to an Azure AI Search vector index.
 
-### 🆕 New Production Features
+### Query workflow
 
-#### Guardrail System
-- **Question Validation** - Filters irrelevant and unsafe questions before processing
-- **Configurable Strictness** - Low, medium, or high guardrail sensitivity
-- **Detailed Logging** - All guardrail decisions logged with reasons
-- **Rejection Messages** - User-friendly messages for rejected queries
-
-#### Session Management & Conversation Memory
-- **Session Tracking** - Every query includes a session_id for conversation continuity
-- **Multi-Turn Conversations** - Remembers previous question and answer (N-1 turn)
-- **Follow-up Support** - Handle questions like "tell me more" or "what did I just ask?"
-- **Automatic Cleanup** - Sessions expire after 30 minutes of inactivity
-- **In-Memory Storage** - Fast, efficient session management without external databases
-
-#### Enhanced Retrieval Transparency
-- **Detailed Chunk Information** - Every retrieved chunk includes:
-  - Chunk ID from Azure Search index
-  - Source file name
-  - Chunk position (index)
-  - Search score (hybrid similarity)
-  - Content preview (200 chars)
-  - Full content for transparency
-- **Retrieval Metrics** - Average scores, chunk counts tracked per query
-
-#### Error Handling & Reliability
-- **Retry Logic** - Exponential backoff for Azure API calls (max 3 retries)
-- **Specific Error Types** - GuardrailRejectionError, RetrievalError, GenerationError, etc.
-- **User-Friendly Messages** - Clear error messages distinguishing:
-  - Guardrail rejection
-  - Retrieval failures
-  - Generation errors
-
-### Infrastructure
-- **Automatic Index Creation** - Programmatically creates Azure AI Search index if not exists
-- **Monitoring** - Azure Application Insights integration with session_id tracking
-- **REST API** - FastAPI backend with Swagger documentation
-- **CLI Tools** - Command-line interface for all operations
-- **Security** - Environment-based configuration, no hardcoded secrets
-- **Background Tasks** - Automatic session cleanup every 5 minutes
-
-### Paper-Specific Retrieval
-- **Single-paper filtering** - Restrict retrieval and answer generation to one uploaded PDF
-- **Safe OData filtering** - Escapes apostrophes in filenames before querying Azure AI Search
-- **Full-corpus mode** - Omit `source_file` to search across all indexed papers
-
-## Roadmap
-
-- [x] PDF upload and text-based RAG
-- [x] Paper-specific retrieval using `source_file`
-- [x] Unit tests for source-file filter generation
-- [ ] Formula extraction with LaTeX and page metadata
-- [ ] Figure detection and cropped-image storage
-- [ ] Multimodal chart and diagram understanding
-- [ ] Table-aware retrieval and export
-- [ ] Retrieval evaluation (Precision@K, Recall@K, and MRR)
+1. The input guardrail checks whether the question is safe and relevant.
+2. The retrieval agent performs hybrid keyword and vector search.
+3. The intent agent classifies the request.
+4. The answer agent generates a grounded response from the retrieved evidence.
+5. The output guardrail checks the generated answer before delivery.
+6. The API returns the answer and a transparent Top-K retrieval trace.
 
 ## Technology Stack
 
-### Azure Services
-- **Azure AI Document Intelligence** - PDF text extraction
-- **Azure AI Foundry** - Embedding model (text-embedding-ada-002) and GPT-4
-  - ⚠️ **Important**: Using Azure AI Foundry, NOT Azure OpenAI Service
-  - Each deployed model has separate endpoint, deployment name, and API key
-- **Azure AI Search** - Vector and hybrid search with HNSW algorithm
-- **Azure Application Insights** - Monitoring and logging
-
-### Python Libraries
-- **LangChain** - Text splitting and AI orchestration
-- **LangGraph** - Multi-agent workflow management
-- **FastAPI** - REST API framework
-- **Pydantic** - Data validation
-- **OpenAI Python SDK** - Azure AI Foundry API client
+| Layer | Technology |
+| --- | --- |
+| Frontend | HTML, CSS, and vanilla JavaScript |
+| API | FastAPI and Pydantic |
+| Agent workflow | LangGraph and LangChain |
+| PDF understanding | Azure AI Document Intelligence |
+| Language and vision models | Azure OpenAI / Microsoft Foundry deployments |
+| Embeddings | `text-embedding-3-small` |
+| Search | Azure AI Search hybrid vector search |
+| Authentication | Azure CLI / Microsoft Entra ID or API keys |
+| Testing | pytest |
 
 ## Prerequisites
 
-### Azure Resources Required
+### Local tools
 
-You need the following Azure resources created:
+- Python 3.10 or later
+- Git
+- Azure CLI
+- An Azure subscription with permission to use the resources below
+
+### Azure resources
+
+You need:
 
 1. **Azure AI Document Intelligence**
-   - Get: Endpoint and API Key
-
-2. **Azure AI Foundry** (with deployed models)
-   - Embedding Model: text-embedding-ada-002
-     - Get: Endpoint, Deployment Name, API Key
-   - GPT-4 Model: gpt-4
-     - Get: Endpoint, Deployment Name, API Key
-
+   - S0 is required for paid add-on features such as formula extraction.
+2. **Azure OpenAI or Microsoft Foundry resource**
+   - one text embedding deployment, recommended: `text-embedding-3-small`
+   - one vision-capable chat deployment, for example `gpt-4.1-mini`
 3. **Azure AI Search**
-   - Get: Endpoint and Admin API Key
-   - Note: Index will be created programmatically
+   - vector search enabled
+4. **Azure AI Content Safety** — optional
+5. **Application Insights** — optional and disabled locally by default
 
-4. **Azure Application Insights**
-   - Get: Connection String
+For Azure CLI authentication, the signed-in identity needs appropriate RBAC
+roles. Typical development roles include:
 
-### Local Requirements
-- Python 3.9 or higher
-- pip (Python package manager)
-- Git
+- `Cognitive Services User`
+- `Cognitive Services OpenAI User`
+- `Search Service Contributor`
+- `Search Index Data Contributor`
 
-## Installation
+Use least-privilege roles appropriate to your environment.
 
-### 1. Clone the Repository
+## Quick Start
+
+### 1. Clone the repository
 
 ```bash
-git clone <repository-url>
-cd multiagent-rag
+git clone https://github.com/RuoxiSun15/research-paper-rag-assistant.git
+cd research-paper-rag-assistant
 ```
 
-### 2. Create Virtual Environment
+### 2. Create a virtual environment
 
 ```bash
-# Create virtual environment
-python -m venv venv
-
-# Activate virtual environment
-# On Linux/Mac:
-source venv/bin/activate
-# On Windows:
-venv\Scripts\activate
-```
-
-### 3. Install Dependencies
-
-```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-## Configuration
+Windows PowerShell activation:
 
-### 1. Environment Variables
+```powershell
+.venv\Scripts\Activate.ps1
+```
 
-Copy the example environment file:
+### 3. Sign in to Azure
+
+```bash
+az login
+az account set --subscription "<subscription-name-or-id>"
+az account show --output table
+```
+
+### 4. Configure the application
 
 ```bash
 cp .env.example .env
 ```
 
-### 2. Fill in Your Azure Credentials
+Edit `.env` with your own endpoints and deployment names. Never commit `.env`.
 
-Edit `.env` and fill in all values:
+The recommended local configuration uses Azure CLI authentication:
 
-```bash
-# Azure Document Intelligence
-AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://your-doc-intelligence.cognitiveservices.azure.com/
-AZURE_DOCUMENT_INTELLIGENCE_KEY=your_key_here
+```dotenv
+# Document Intelligence
+AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT=https://<resource>.cognitiveservices.azure.com/
+AZURE_DOCUMENT_INTELLIGENCE_USE_AZURE_CLI=true
+FORMULA_EXTRACTION_ENABLED=true
+FIGURE_EXTRACTION_ENABLED=true
+FIGURE_OUTPUT_DIR=tmp/figures
 
-# Azure AI Foundry - Embedding Model
-AZURE_AI_FOUNDRY_EMBEDDING_ENDPOINT=https://your-endpoint.openai.azure.com/
-AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME=text-embedding-ada-002
-AZURE_AI_FOUNDRY_EMBEDDING_API_KEY=your_key_here
-AZURE_AI_FOUNDRY_EMBEDDING_API_VERSION=2024-08-01-preview
+# Vision-capable chat model
+VISION_ANALYSIS_ENABLED=true
+AZURE_VISION_ENDPOINT=https://<resource>.openai.azure.com/
+AZURE_VISION_DEPLOYMENT_NAME=<vision-deployment-name>
+AZURE_VISION_USE_AZURE_CLI=true
+AZURE_VISION_API_VERSION=2024-10-21
+VISION_MAX_FIGURES_PER_DOCUMENT=5
 
-# Azure AI Foundry - GPT-4 Model
-AZURE_AI_FOUNDRY_GPT4_ENDPOINT=https://your-endpoint.openai.azure.com/
-AZURE_AI_FOUNDRY_GPT4_DEPLOYMENT_NAME=gpt-4
-AZURE_AI_FOUNDRY_GPT4_API_KEY=your_key_here
-AZURE_AI_FOUNDRY_GPT4_API_VERSION=2024-08-01-preview
+# Embeddings
+AZURE_AI_FOUNDRY_EMBEDDING_ENDPOINT=https://<resource>.openai.azure.com/
+AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME=text-embedding-3-small
+AZURE_AI_FOUNDRY_EMBEDDING_USE_AZURE_CLI=true
+AZURE_AI_FOUNDRY_EMBEDDING_API_VERSION=2024-10-21
+
+# Answer generation
+AZURE_AI_FOUNDRY_GPT4_ENDPOINT=https://<resource>.openai.azure.com/
+AZURE_AI_FOUNDRY_GPT4_DEPLOYMENT_NAME=<chat-deployment-name>
+AZURE_AI_FOUNDRY_GPT4_USE_AZURE_CLI=true
+AZURE_AI_FOUNDRY_GPT4_API_VERSION=2024-10-21
 
 # Azure AI Search
-AZURE_SEARCH_ENDPOINT=https://your-search-service.search.windows.net
-AZURE_SEARCH_ADMIN_KEY=your_admin_key_here
+AZURE_SEARCH_ENDPOINT=https://<search-service>.search.windows.net
 AZURE_SEARCH_INDEX_NAME=rag-documents-index
+AZURE_SEARCH_USE_AZURE_CLI=true
+AZURE_SEARCH_API_VERSION=2024-07-01
 
-# Azure Application Insights
-APPLICATIONINSIGHTS_CONNECTION_STRING=InstrumentationKey=...
-
-# Application Settings
+# RAG settings
 CHUNK_SIZE=1200
 CHUNK_OVERLAP=0.2
 RETRIEVAL_TOP_K=5
 LLM_TEMPERATURE=0.7
-
-# 🆕 Guardrail Settings
-GUARDRAIL_ENABLED=true
-GUARDRAIL_STRICTNESS=medium  # low, medium, or high
-
-# 🆕 Session Management
 SESSION_TIMEOUT_MINUTES=30
-CONVERSATION_MEMORY_TURNS=1  # Currently only supports 1 (previous turn)
+CONVERSATION_MEMORY_TURNS=1
+
+# Optional monitoring
+ENABLE_APP_INSIGHTS_LOGGING=false
 ```
 
-### 3. Important Notes on Azure AI Foundry
+API-key authentication is also supported. Set the relevant
+`*_USE_AZURE_CLI=false` value and provide the matching key in `.env`.
 
-⚠️ **Critical Configuration Details:**
-
-- **NOT Azure OpenAI Service**: This system uses Azure AI Foundry, which has different endpoints
-- **Separate Credentials**: Each deployed model (embedding and GPT-4) has its own:
-  - Endpoint URL
-  - Deployment name
-  - API key
-- **Find Your Credentials**:
-  - Go to Azure AI Foundry portal
-  - Navigate to "Deployments"
-  - Select each deployment to get its specific credentials
-
-### 4. Verify Configuration
+### 5. Start PaperLens
 
 ```bash
-# Test configuration loading
-python -c "from config import get_config; get_config(); print('✓ Configuration loaded successfully')"
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
 ```
 
-## Usage
+Open:
 
-### CLI Interface
+- **PaperLens UI:** http://127.0.0.1:8000
+- **Swagger API:** http://127.0.0.1:8000/docs
+- **ReDoc:** http://127.0.0.1:8000/redoc
 
-The `main.py` script provides a command-line interface for all operations.
+The first startup can take longer in some local environments because the agent
+and PDF-processing dependencies are imported before the API becomes ready.
 
-#### 1. Process a Document
+## Using PaperLens
+
+### Web interface
+
+1. Open the PaperLens UI.
+2. Import a PDF from the Paper Library.
+3. Wait for layout analysis, formula/figure extraction, embeddings, and indexing.
+4. Select the paper in the library.
+5. Ask a question in the Reading Workspace.
+6. Expand evidence cards in the Evidence Inspector to inspect the Top-K matches.
+
+Example questions:
+
+- `Summarize the paper's three main contributions.`
+- `Explain the proposed method and its overall workflow.`
+- `What does the trust-value generation figure show?`
+- `Explain the key equations and variables.`
+- `What limitations are identified by the authors?`
+
+### Command-line interface
+
+Process a PDF:
 
 ```bash
-# Process doc.pdf through the full pipeline
-python main.py process doc.pdf
+python main.py process /path/to/paper.pdf
 ```
 
-This will:
-1. Extract text from PDF
-2. Chunk the text
-3. Generate embeddings
-4. Create index (if needed)
-5. Index all chunks
-
-#### 2. Test Retrieval
+Test retrieval across the whole index:
 
 ```bash
-# Retrieve relevant chunks for a query
-python main.py retrieve "What is machine learning?" --top-k 5
+python main.py retrieve "What is the main contribution?" --top-k 5
 ```
 
-#### 3. Test Multi-Agent Query
+Restrict retrieval to one paper:
 
 ```bash
-# Ask a question using the full multi-agent system
-python main.py query "What is artificial intelligence?" --top-k 5
+python main.py retrieve \
+  "How is the overall trust value calculated?" \
+  --source-file "paper.pdf" \
+  --top-k 5
 ```
 
-#### 4. Manage Index
+Run the multi-agent query workflow:
 
 ```bash
-# Check index status
+python main.py query \
+  "Explain the method used in this paper." \
+  --source-file "paper.pdf"
+```
+
+Inspect the search index:
+
+```bash
 python main.py index status
-
-# Create index
-python main.py index create
-
-# Recreate index (deletes all data!)
-python main.py index recreate
-
-# Delete index
-python main.py index delete
 ```
 
-### FastAPI Server
+## API
 
-#### Start the Server
+### Health check
 
-```bash
-# Start with uvicorn
-uvicorn src.api.main:app --reload --host 0.0.0.0 --port 8000
-
-# Or run directly
-python src/api/main.py
-```
-
-The server will start at: `http://localhost:8000`
-
-#### Access Documentation
-
-- **Swagger UI**: http://localhost:8000/docs
-- **ReDoc**: http://localhost:8000/redoc
-
-## API Documentation
-
-### Endpoints
-
-#### Health Check
 ```http
 GET /api/v1/health
 ```
 
-Returns service health status and connectivity.
+### List indexed papers
 
-#### Index Status
 ```http
-GET /api/v1/index/status
+GET /api/v1/documents
 ```
 
-Returns index statistics and configuration.
+Example response:
 
-#### Upload Document
+```json
+{
+  "documents": [
+    {"source_file": "paper.pdf", "chunk_count": 42}
+  ]
+}
+```
+
+### Upload a paper
+
 ```http
 POST /api/v1/upload
 Content-Type: multipart/form-data
 ```
 
-Upload and process a PDF document.
-
-**Example using curl:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/upload" \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "file=@doc.pdf"
+curl -X POST "http://127.0.0.1:8000/api/v1/upload" \
+  -F "file=@/path/to/paper.pdf"
 ```
 
-**Response:**
+Example response:
+
 ```json
 {
   "success": true,
   "message": "Document processed successfully",
-  "file_name": "doc.pdf",
-  "chunks_created": 25,
-  "chunks_indexed": 25,
-  "processing_time_seconds": 12.5
+  "file_name": "paper.pdf",
+  "chunks_created": 128,
+  "chunks_indexed": 128,
+  "formulas_detected": 34,
+  "figures_detected": 8,
+  "figures_analyzed": 5,
+  "processing_time_seconds": 76.4
 }
 ```
 
-#### Query System 🆕 Enhanced
+### Ask a question
+
 ```http
 POST /api/v1/query
 Content-Type: application/json
 ```
 
-Ask a question using the multi-agent RAG system with session management and conversation memory.
-
-**Request:**
-```json
-{
-  "question": "What is machine learning?",
-  "session_id": "session_12345",
-  "top_k": 5,
-  "user_id": "user_67890",
-  "metadata": {"source": "web_app"}
-}
-```
-
-**Required Fields:**
-- `question` (string): User's question
-- `session_id` (string): Session identifier (provided by backend)
-
-**Optional Fields:**
-- `top_k` (integer, 1-20, default: 5): Number of chunks to retrieve
-- `user_id` (string): Optional user identifier for tracking
-- `metadata` (object): Additional context
-
-**Example using curl:**
 ```bash
-curl -X POST "http://localhost:8000/api/v1/query" \
-  -H "accept: application/json" \
+curl -X POST "http://127.0.0.1:8000/api/v1/query" \
   -H "Content-Type: application/json" \
   -d '{
-    "question": "What is machine learning?",
-    "session_id": "session_12345",
-    "top_k": 5
+    "question": "What does the main workflow figure show?",
+    "session_id": "demo-session",
+    "source_file": "paper.pdf",
+    "top_k": 5,
+    "metadata": {"source": "curl"}
   }'
 ```
 
-**Response (Success):**
-```json
-{
-  "success": true,
-  "question": "What is machine learning?",
-  "answer": "Machine learning is a subset of artificial intelligence...",
-  "intent": "definition",
-  "session_id": "session_12345",
-  "conversation_turn": 1,
-  "chunks_retrieved": 5,
-  "retrieved_chunks": [
-    {
-      "chunk_id": "doc_pdf_chunk_5",
-      "source_file": "doc.pdf",
-      "chunk_index": 5,
-      "score": 0.8542,
-      "content_preview": "Machine learning is a subset of artificial intelligence...",
-      "full_content": "Machine learning is a subset of artificial intelligence that enables..."
-    }
-  ],
-  "sources": ["doc.pdf"],
-  "processing_time_seconds": 2.3,
-  "guardrail_passed": true
-}
-```
+Each retrieved chunk includes:
 
-**Response (Guardrail Rejection):**
-```json
-{
-  "success": false,
-  "question": "What's the weather today?",
-  "answer": "Your question doesn't appear to be related to the indexed documents.",
-  "intent": "rejected",
-  "session_id": "session_12345",
-  "conversation_turn": 1,
-  "chunks_retrieved": 0,
-  "retrieved_chunks": [],
-  "sources": [],
-  "processing_time_seconds": 0.5,
-  "guardrail_passed": false
-}
-```
+- `chunk_id`
+- `source_file`
+- `chunk_index`
+- `content_type` (`text`, `formula`, or `figure`)
+- `page_number` when available
+- `score`
+- `content_preview`
+- `full_content`
 
-**Follow-up Question Example:**
-```bash
-# First question
-curl -X POST "http://localhost:8000/api/v1/query" \
-  -d '{"question": "What is AI?", "session_id": "session_123"}'
+### Index operations
 
-# Follow-up question (uses conversation memory)
-curl -X POST "http://localhost:8000/api/v1/query" \
-  -d '{"question": "Tell me more about that", "session_id": "session_123"}'
-```
-
-#### Create Index
 ```http
+GET  /api/v1/index/status
 POST /api/v1/index/create?recreate=false
 ```
 
-Create or recreate the search index.
-
 ## Project Structure
 
-```
+```text
 multiagent-rag/
+├── frontend/
+│   ├── index.html                # PaperLens interface
+│   ├── styles.css                # Responsive three-zone layout
+│   └── app.js                    # Upload, chat, and evidence UI
 ├── config/
-│   ├── __init__.py
-│   └── azure_config.py          # Azure service configuration
+│   └── azure_config.py           # Environment validation and settings
+├── scripts/
+│   └── resume_document_analysis.py
+├── evaluation/
+│   └── dataset.example.json      # Labelled evaluation-set template
 ├── src/
-│   ├── data_pipeline/
-│   │   ├── __init__.py
-│   │   ├── document_extractor.py    # PDF text extraction
-│   │   ├── text_chunker.py          # Text chunking
-│   │   ├── embedder.py              # Embedding generation
-│   │   └── indexer.py               # Azure AI Search indexing
-│   ├── retrieval/
-│   │   ├── __init__.py
-│   │   └── retriever.py             # Hybrid search retrieval
 │   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── base_agent.py            # Base agent class
-│   │   └── rag_agent.py             # Multi-agent RAG system
+│   │   ├── base_agent.py
+│   │   └── rag_agent.py          # LangGraph multi-agent workflow
+│   ├── api/
+│   │   ├── main.py               # FastAPI app and frontend hosting
+│   │   ├── models.py
+│   │   └── routes.py
+│   ├── data_pipeline/
+│   │   ├── document_extractor.py
+│   │   ├── text_chunker.py
+│   │   ├── formula_parser.py
+│   │   ├── figure_parser.py
+│   │   ├── vision_analyzer.py
+│   │   ├── embedder.py
+│   │   └── indexer.py
+│   ├── guardrails/
+│   ├── evaluation/               # Retrieval metrics and faithfulness judge
 │   ├── monitoring/
-│   │   ├── __init__.py
-│   │   └── logger.py                # Azure Application Insights
-│   └── api/
-│       ├── __init__.py
-│       ├── main.py                  # FastAPI application
-│       ├── models.py                # Pydantic models
-│       └── routes.py                # API endpoints
-├── doc.pdf                          # Test document
-├── langgraph_test.py               # Multi-agent blueprint
-├── main.py                         # CLI orchestration script
-├── requirements.txt                # Python dependencies
-├── .env.example                    # Environment variables template
-├── .gitignore
+│   ├── retrieval/
+│   └── utils/
+├── tests/
+├── main.py                       # CLI entry point
+├── requirements.txt
+├── .env.example
 └── README.md
-```
-
-## Security Considerations
-
-### 🔒 API Key Management
-
-**NEVER commit secrets to version control!**
-
-- ✅ All secrets in `.env` file (which is in `.gitignore`)
-- ✅ `.env.example` contains only variable names, no actual values
-- ✅ Environment variables validated at startup
-- ✅ Secrets masked in logs (show first/last 4 characters only)
-
-### 🏭 Production Recommendations
-
-**For production deployments, use Azure Managed Identity instead of API keys:**
-
-```python
-from azure.identity import DefaultAzureCredential
-
-credential = DefaultAzureCredential()
-```
-
-**Benefits:**
-- No API keys to manage or rotate
-- Automatic credential management
-- Fine-grained RBAC (Role-Based Access Control)
-- Works seamlessly in Azure-hosted environments
-
-**See:** [Azure Identity Documentation](https://learn.microsoft.com/azure/developer/python/sdk/authentication-overview)
-
-### 🛡️ Admin API Key
-
-The Azure AI Search Admin Key has full management permissions:
-- Can create/delete indexes
-- Can read/write all data
-- Must be carefully protected
-- Consider using Query Keys for read-only operations in production
-
-## Troubleshooting
-
-### Configuration Errors
-
-**Error: Required environment variable not set**
-```
-Solution: Check your .env file and ensure all variables from .env.example are filled in
-```
-
-**Error: Invalid endpoint URL**
-```
-Solution: Ensure endpoints start with https:// and are from correct Azure resources
-```
-
-### Azure AI Foundry Issues
-
-**Error: Model not found or deployment not available**
-```
-Solution:
-1. Verify models are deployed in Azure AI Foundry
-2. Check deployment names match exactly
-3. Ensure API keys are for the correct deployments
-4. Verify API version is correct (2024-08-01-preview)
-```
-
-### Index Creation Issues
-
-**Error: Index creation failed**
-```
-Solution:
-1. Verify Azure Search Admin Key has management permissions
-2. Check search service tier supports vector search
-3. Ensure index name follows naming rules (lowercase, no special chars)
-```
-
-### Import Errors
-
-**Error: No module named 'azure.ai.documentintelligence'**
-```
-Solution: Install dependencies
-pip install -r requirements.txt
-```
-
-### Connection Issues
-
-**Error: Connection timeout or refused**
-```
-Solution:
-1. Check internet connectivity
-2. Verify Azure service endpoints are correct
-3. Check firewall/network settings
-4. Ensure Azure services are in same region (recommended)
-```
-
-## Monitoring
-
-### Azure Application Insights
-
-All operations are logged to Azure Application Insights:
-
-- **Metrics**: Processing times, chunk counts, retrieval performance
-- **Events**: Document uploads, queries, index operations
-- **Exceptions**: Automatic error tracking
-- **Dependencies**: Azure service call tracking
-
-**View in Azure Portal:**
-1. Go to your Application Insights resource
-2. Navigate to "Logs" or "Metrics"
-3. Query for custom events and metrics
-
-### Local Logs
-
-Logs are also output to console with format:
-```
-2024-01-15 10:30:00 - module.name - INFO - Message
 ```
 
 ## Testing
 
-### Quick Test Workflow
-
-1. **Process test document:**
-   ```bash
-   python main.py process doc.pdf
-   ```
-
-2. **Test retrieval:**
-   ```bash
-   python main.py retrieve "test query"
-   ```
-
-3. **Test multi-agent query:**
-   ```bash
-   python main.py query "What is the main topic?"
-   ```
-
-4. **Test API:**
-   ```bash
-   # Start server
-   uvicorn src.api.main:app --reload
-
-   # In another terminal, test upload
-   curl -X POST "http://localhost:8000/api/v1/upload" \
-     -F "file=@doc.pdf"
-
-   # Test query
-   curl -X POST "http://localhost:8000/api/v1/query" \
-     -H "Content-Type: application/json" \
-     -d '{"question": "What is this about?"}'
-   ```
-
-## Performance Optimization
-
-### Chunk Size Tuning
-
-Adjust in `.env`:
-```bash
-CHUNK_SIZE=1200          # Larger = more context, fewer chunks
-CHUNK_OVERLAP=0.2        # Higher = more overlap, better continuity
-```
-
-### Retrieval Tuning
+Run the automated tests:
 
 ```bash
-RETRIEVAL_TOP_K=5        # Number of chunks to retrieve
+pytest -q
 ```
 
-### LLM Temperature
+The current tests cover:
+
+- source-file OData filter escaping
+- formula metadata and formula chunks
+- figure metadata and searchable figure chunks
+- decorative-image filtering
+- structured vision analysis formatting
+- Azure CLI token parsing
+- Precision@K, Recall@K, and reciprocal-rank calculations
+- structured faithfulness-judge response parsing
+
+## RAG Evaluation
+
+PaperLens includes a repeatable evaluation command for measuring retrieval and
+answer grounding. Start by copying the template:
 
 ```bash
-LLM_TEMPERATURE=0.7      # Lower = more focused, Higher = more creative
+cp evaluation/dataset.example.json evaluation/my_dataset.json
 ```
 
-## Contributing
+For each question, replace `relevant_chunk_ids` with the IDs of the chunks that
+should answer that question. Chunk IDs are visible in the API query response
+and the Evidence Inspector. A dataset can contain multiple cases:
 
-Contributions are welcome! Please:
+```json
+[
+  {
+    "id": "method-001",
+    "question": "What is the paper's main method?",
+    "source_file": "example-paper.pdf",
+    "relevant_chunk_ids": ["example-paper_pdf_chunk_4"]
+  }
+]
+```
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
+Run the inexpensive retrieval-only evaluation first:
 
-## License
+```bash
+python main.py evaluate evaluation/my_dataset.json --top-k 5
+```
 
-[Add your license here]
+For an embedding deployment with minimal capacity, space requests apart:
 
-## Support
+```bash
+python main.py evaluate evaluation/my_dataset.json --top-k 5 --case-delay 12
+```
 
-For issues and questions:
-- Create an issue in the repository
-- Check Azure service health status
-- Review Azure documentation for service-specific issues
+This writes a detailed JSON report to `evaluation/results/latest.json` and
+prints mean Precision@5, Recall@5, and MRR@5. To also generate answers and ask
+the configured Azure chat model to judge whether every factual claim is
+supported by the retrieved passages, add:
+
+```bash
+python main.py evaluate evaluation/my_dataset.json --top-k 5 --faithfulness
+```
+
+Faithfulness mode uses additional model calls and therefore may incur Azure
+cost. The judge returns a score from 0 to 1 plus supported and unsupported
+claims. Review low-scoring cases manually; an LLM judge is a useful signal, not
+an unquestionable ground truth.
+
+For a low-cost Azure smoke test, use a small PDF or limit the number of figures
+sent to the vision model:
+
+```dotenv
+VISION_MAX_FIGURES_PER_DOCUMENT=1
+```
+
+## Reliability and Cost Controls
+
+- Azure 429 responses trigger bounded retries with wait intervals.
+- Temporary embedding connection failures are retried.
+- Vision analysis is capped per document.
+- Decorative images are filtered before billable vision calls.
+- Embeddings are sent in controlled batches.
+- `.env`, temporary PDFs, extracted figures, and PDF files are excluded from Git.
+- Use an Azure Budget and cost alerts for development subscriptions.
+
+Azure budgets provide alerts; they do not automatically stop resources when the
+threshold is reached. Delete or disable unused paid resources when testing ends.
+
+## Security
+
+- Never commit `.env`, API keys, access tokens, or service credentials.
+- Prefer Azure CLI or Managed Identity authentication over long-lived keys.
+- Use least-privilege RBAC roles.
+- Keep Azure AI Search admin keys out of browser-side code.
+- Do not expose this development API publicly without authentication,
+  authorization, rate limiting, restricted CORS, and secure file validation.
+- Application Insights logging is opt-in locally through
+  `ENABLE_APP_INSIGHTS_LOGGING=true`.
+
+## Current Limitations
+
+- Inline formula OCR can be noisy or incomplete when equations are embedded in
+  dense prose. Formula-context merging and quality scoring remain future work.
+- Vision descriptions are model-generated and should be verified against the
+  original figure.
+- The web UI does not yet include an embedded PDF page viewer.
+- Uploaded PDFs are processed from temporary storage and are not retained by
+  the application after ingestion.
+- Session memory is held in-process and is not shared across server instances.
+- Upload processing is synchronous; large papers may take several minutes.
+- Azure service quotas can affect ingestion speed on low-capacity deployments.
+
+## Roadmap
+
+- [x] Paper-specific retrieval
+- [x] Formula extraction and LaTeX-aware chunks
+- [x] Figure extraction and image storage
+- [x] Vision-based figure interpretation
+- [x] Text, formula, and figure retrieval metadata
+- [x] Responsive PaperLens web interface
+- [x] Evidence Inspector for Top-K transparency
+- [ ] Embedded PDF viewer with page-level navigation
+- [ ] Table-aware extraction and structured table retrieval
+- [ ] Formula quality filtering and surrounding-context linking
+- [ ] Background ingestion jobs with live progress events
+- [ ] Persistent user accounts and document libraries
+- [x] Retrieval evaluation with Precision@K, Recall@K, MRR, and answer faithfulness
+- [ ] Containerized deployment and CI/CD
+
+## Research Document and Copyright Notice
+
+Publisher PDFs are not included in this repository. The system has been tested
+locally with research papers, including:
+
+- Ruoxi Sun et al., *Improving the recommendation accuracy of TrustSVD via
+  trustworthy analysis in the social network environment*, Journal of
+  Information Science. DOI:
+  [10.1177/01655515221136221](https://doi.org/10.1177/01655515221136221)
+
+Public availability of an article does not necessarily grant permission to
+redistribute the publisher-formatted PDF. Before committing a test paper, check
+the publisher policy and the rights attached to the specific manuscript version.
+Use an accepted manuscript, an openly licensed paper, or a synthetic test PDF
+when redistribution permission is unclear.
+
+## Troubleshooting
+
+### `Address already in use`
+
+Another process is already listening on port 8000. Stop it or choose another
+port:
+
+```bash
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8001
+```
+
+### `No subscriptions found`
+
+The signed-in Azure account has no accessible subscription. Confirm the tenant
+and ask the subscription administrator to grant access:
+
+```bash
+az account tenant list --output table
+az account list --all --output table
+```
+
+### HTTP 401 or 403 from Azure
+
+Confirm that:
+
+1. Azure CLI is signed in to the correct tenant and subscription.
+2. The account has the required RBAC role on each resource.
+3. The endpoint and deployment name match the selected resource.
+4. Role assignments have had time to propagate.
+
+### HTTP 429 rate limit
+
+The selected deployment has reached its request or token quota. PaperLens waits
+and retries bounded requests automatically. For repeated limits, reduce the
+number of analyzed figures, lower the ingestion sample size, increase deployment
+capacity, or request additional quota.
+
+### Formula or figure results look incorrect
+
+- Compare the extracted result with the original page.
+- Confirm formula and figure features are enabled.
+- Check that the image is a meaningful paper figure rather than a page ornament.
+- Treat model-generated visual descriptions as interpretations, not ground truth.
 
 ## Acknowledgments
 
-- Based on the original
+- Original multi-agent RAG foundation:
   [`dukewillbe185/multiagent-rag`](https://github.com/dukewillbe185/multiagent-rag)
-  project and extended with paper-specific retrieval and a multimodal research
-  assistant roadmap
-- Built with LangChain and LangGraph
-- Powered by Azure AI services
-- FastAPI for REST API
-- OpenAI for embedding and language models
+- Microsoft Azure AI Document Intelligence, Azure OpenAI, and Azure AI Search
+- FastAPI, LangChain, and LangGraph open-source communities
 
----
+## Contributing
 
-**Happy RAG Building! 🚀**
+Issues and pull requests are welcome. Please avoid including copyrighted PDFs,
+credentials, generated temporary files, or Azure resource identifiers in commits.
+Add or update tests for behavioral changes.
+
+## License
+
+No license file is currently included. Add an explicit open-source license before
+inviting reuse or redistribution of the repository.

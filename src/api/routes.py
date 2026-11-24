@@ -22,6 +22,9 @@ from src.api.models import (
     ChunkInfo
 )
 from src.data_pipeline.document_extractor import DocumentExtractor
+from src.data_pipeline.formula_parser import build_formula_chunks
+from src.data_pipeline.figure_parser import build_figure_chunks
+from src.data_pipeline.vision_analyzer import VisionAnalyzer
 from src.data_pipeline.text_chunker import TextChunker
 from src.data_pipeline.embedder import Embedder
 from src.data_pipeline.indexer import AzureSearchIndexer
@@ -107,12 +110,25 @@ async def get_index_status():
             semantic_search_enabled=stats.get("semantic_search_enabled", False),
             fields=stats.get("fields", [])
         )
-
     except Exception as e:
         logger.error(f"Error getting index status: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get index status: {str(e)}"
+        )
+
+
+@router.get("/documents")
+async def list_documents():
+    """Return the papers currently available for document-scoped questions."""
+    try:
+        documents = AzureSearchIndexer().list_document_sources()
+        return {"documents": documents}
+    except Exception as e:
+        logger.error(f"Error listing documents: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list documents: {str(e)}",
         )
 
 
@@ -167,13 +183,41 @@ async def upload_document(file: UploadFile = File(...)):
             metadata["source_file"] = file.filename  # Use original filename
 
             logger.info(f"Extracted {len(extracted_text)} characters from {extraction_result['page_count']} pages")
+            formulas_detected = len(extraction_result.get("formulas", []))
+            logger.info(f"Detected {formulas_detected} formulas")
+            figures_detected = len(extraction_result.get("figures", []))
+            logger.info(f"Detected {figures_detected} figures")
+            if get_config().vision_analysis_enabled:
+                extraction_result["figures"] = VisionAnalyzer().analyze_figures(
+                    extraction_result.get("figures", [])
+                )
+            figures_analyzed = sum(
+                1 for figure in extraction_result.get("figures", [])
+                if figure.get("vision_analysis")
+            )
 
             # Step 2: Chunk text
             logger.info("Step 2: Chunking text...")
             chunker = TextChunker()
             chunks = chunker.chunk_text(extracted_text, metadata=metadata)
+            formula_chunks = build_formula_chunks(
+                extraction_result.get("formulas", []),
+                metadata,
+                start_index=len(chunks),
+            )
+            chunks.extend(formula_chunks)
+            figure_chunks = build_figure_chunks(
+                extraction_result.get("figures", []),
+                metadata,
+                start_index=len(chunks),
+            )
+            chunks.extend(figure_chunks)
 
-            logger.info(f"Created {len(chunks)} chunks")
+            logger.info(
+                f"Created {len(chunks)} chunks "
+                f"({len(formula_chunks)} formula chunks, "
+                f"{len(figure_chunks)} figure chunks)"
+            )
 
             # Step 3: Generate embeddings
             logger.info("Step 3: Generating embeddings...")
@@ -204,6 +248,8 @@ async def upload_document(file: UploadFile = File(...)):
             track_metric("chunks_created", len(chunks), {"file": file.filename})
             track_metric("chunks_indexed", indexing_result['indexed'], {"file": file.filename})
             track_metric("processing_time", processing_time, {"file": file.filename})
+            track_metric("formulas_detected", formulas_detected, {"file": file.filename})
+            track_metric("figures_detected", figures_detected, {"file": file.filename})
             track_event("document_upload_completed", {
                 "file_name": file.filename,
                 "chunks": len(chunks),
@@ -216,6 +262,9 @@ async def upload_document(file: UploadFile = File(...)):
                 file_name=file.filename,
                 chunks_created=len(chunks),
                 chunks_indexed=indexing_result['indexed'],
+                formulas_detected=formulas_detected,
+                figures_detected=figures_detected,
+                figures_analyzed=figures_analyzed,
                 processing_time_seconds=round(processing_time, 2)
             )
 
@@ -502,7 +551,9 @@ async def query_documents(request: QueryRequest):
                 chunk_index=meta.get("chunk_index") or 0,
                 score=score,
                 content_preview=content[:200] if content else "",
-                full_content=content
+                full_content=content,
+                content_type=meta.get("content_type") or "text",
+                page_number=meta.get("page_number"),
             )
             retrieved_chunks_info.append(chunk_info)
 

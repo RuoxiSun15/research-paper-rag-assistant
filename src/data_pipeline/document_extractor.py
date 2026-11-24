@@ -8,10 +8,19 @@ Document Intelligence service with the built-in Layout model.
 import logging
 from typing import Dict, Any
 from pathlib import Path
-from azure.ai.formrecognizer import DocumentAnalysisClient
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.documentintelligence.models import (
+    AnalyzeDocumentRequest,
+    DocumentAnalysisFeature,
+    DocumentContentFormat,
+    AnalyzeOutputOption,
+)
 from azure.core.credentials import AzureKeyCredential
 
 from config import get_config
+from src.data_pipeline.formula_parser import extract_formulas_from_pages
+from src.data_pipeline.figure_parser import extract_figures, save_figure_images
+from src.utils.azure_cli_credential import AzureCliCredentialLite
 
 logger = logging.getLogger(__name__)
 
@@ -38,9 +47,17 @@ class DocumentExtractor:
         try:
             endpoint = config.doc_intelligence_endpoint.rstrip('/')
 
-            self.client = DocumentAnalysisClient(
+            self.formula_extraction_enabled = config.formula_extraction_enabled
+            self.figure_extraction_enabled = config.figure_extraction_enabled
+            self.figure_output_dir = Path(config.figure_output_dir)
+            credential = (
+                AzureCliCredentialLite()
+                if config.doc_intelligence_use_azure_cli
+                else AzureKeyCredential(config.doc_intelligence_key)
+            )
+            self.client = DocumentIntelligenceClient(
                 endpoint=endpoint,
-                credential=AzureKeyCredential(config.doc_intelligence_key)
+                credential=credential,
             )
             logger.info("DocumentExtractor initialized successfully")
         except Exception as e:
@@ -78,9 +95,18 @@ class DocumentExtractor:
             # Read and analyze PDF file
             with open(pdf_file, "rb") as f:
                 logger.info(f"Analyzing document...")
+                analyze_options = {
+                    "body": f,
+                    "output_content_format": DocumentContentFormat.MARKDOWN,
+                }
+                if self.formula_extraction_enabled:
+                    analyze_options["features"] = [DocumentAnalysisFeature.FORMULAS]
+                if self.figure_extraction_enabled:
+                    analyze_options["output"] = [AnalyzeOutputOption.FIGURES]
+
                 poller = self.client.begin_analyze_document(
                     "prebuilt-layout",
-                    document=f
+                    **analyze_options,
                 )
 
                 logger.info("Waiting for analysis to complete...")
@@ -89,6 +115,16 @@ class DocumentExtractor:
 
             # Extract text content
             extracted_text = result.content if result.content else ""
+            formulas = extract_formulas_from_pages(result.pages)
+            figures = extract_figures(result.figures)
+            if self.figure_extraction_enabled and figures:
+                figure_dir = self.figure_output_dir / pdf_file.stem
+                figures = save_figure_images(
+                    self.client,
+                    poller.details["operation_id"],
+                    figures,
+                    figure_dir,
+                )
 
             # Get metadata
             metadata = {
@@ -97,6 +133,8 @@ class DocumentExtractor:
                 "page_count": len(result.pages) if result.pages else 0,
                 "file_size_bytes": pdf_file.stat().st_size
             }
+            metadata["formula_count"] = len(formulas)
+            metadata["figure_count"] = len(figures)
 
             logger.info(
                 f"Successfully extracted {len(extracted_text)} characters "
@@ -105,6 +143,8 @@ class DocumentExtractor:
 
             return {
                 "text": extracted_text,
+                "formulas": formulas,
+                "figures": figures,
                 "page_count": metadata["page_count"],
                 "metadata": metadata
             }
@@ -131,9 +171,18 @@ class DocumentExtractor:
         logger.info(f"Starting text extraction from URL: {document_url}")
 
         try:
-            poller = self.client.begin_analyze_document_from_url(
+            analyze_options = {
+                "output_content_format": DocumentContentFormat.MARKDOWN,
+            }
+            if self.formula_extraction_enabled:
+                analyze_options["features"] = [DocumentAnalysisFeature.FORMULAS]
+            if self.figure_extraction_enabled:
+                analyze_options["output"] = [AnalyzeOutputOption.FIGURES]
+
+            poller = self.client.begin_analyze_document(
                 "prebuilt-layout",
-                document_url=document_url
+                AnalyzeDocumentRequest(url_source=document_url),
+                **analyze_options,
             )
 
             logger.info("Waiting for analysis to complete...")
@@ -142,11 +191,22 @@ class DocumentExtractor:
 
             # Extract text content
             extracted_text = result.content if result.content else ""
+            formulas = extract_formulas_from_pages(result.pages)
+            figures = extract_figures(result.figures)
+            if self.figure_extraction_enabled and figures:
+                figures = save_figure_images(
+                    self.client,
+                    poller.details["operation_id"],
+                    figures,
+                    self.figure_output_dir / "remote_document",
+                )
 
             # Get metadata
             metadata = {
                 "source_url": document_url,
-                "page_count": len(result.pages) if result.pages else 0
+                "page_count": len(result.pages) if result.pages else 0,
+                "formula_count": len(formulas),
+                "figure_count": len(figures),
             }
 
             logger.info(
@@ -156,6 +216,8 @@ class DocumentExtractor:
 
             return {
                 "text": extracted_text,
+                "formulas": formulas,
+                "figures": figures,
                 "page_count": metadata["page_count"],
                 "metadata": metadata
             }

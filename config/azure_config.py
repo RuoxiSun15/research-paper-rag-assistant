@@ -97,13 +97,66 @@ class AzureConfig:
             # Document Intelligence
             # Strip trailing slashes to prevent double-slash in API URLs
             self.doc_intelligence_endpoint = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT").rstrip('/')
-            self.doc_intelligence_key = _get_required_env("AZURE_DOCUMENT_INTELLIGENCE_KEY")
+            self.doc_intelligence_key = _get_optional_env(
+                "AZURE_DOCUMENT_INTELLIGENCE_KEY",
+                ""
+            )
+            self.doc_intelligence_use_azure_cli = _get_optional_env(
+                "AZURE_DOCUMENT_INTELLIGENCE_USE_AZURE_CLI",
+                "false"
+            ).lower() == "true"
+            self.formula_extraction_enabled = _get_optional_env(
+                "FORMULA_EXTRACTION_ENABLED",
+                "false"
+            ).lower() == "true"
+            self.figure_extraction_enabled = _get_optional_env(
+                "FIGURE_EXTRACTION_ENABLED",
+                "false"
+            ).lower() == "true"
+            self.figure_output_dir = _get_optional_env(
+                "FIGURE_OUTPUT_DIR",
+                "tmp/figures"
+            )
+
+            # Vision analysis for extracted paper figures
+            self.vision_analysis_enabled = _get_optional_env(
+                "VISION_ANALYSIS_ENABLED",
+                "false"
+            ).lower() == "true"
+            self.vision_endpoint = _get_optional_env(
+                "AZURE_VISION_ENDPOINT",
+                ""
+            ).rstrip('/')
+            self.vision_deployment_name = _get_optional_env(
+                "AZURE_VISION_DEPLOYMENT_NAME",
+                ""
+            )
+            self.vision_api_key = _get_optional_env("AZURE_VISION_API_KEY", "")
+            self.vision_use_azure_cli = _get_optional_env(
+                "AZURE_VISION_USE_AZURE_CLI",
+                "false"
+            ).lower() == "true"
+            self.vision_api_version = _get_optional_env(
+                "AZURE_VISION_API_VERSION",
+                "2024-10-21"
+            )
+            self.vision_max_figures_per_document = int(_get_optional_env(
+                "VISION_MAX_FIGURES_PER_DOCUMENT",
+                "5"
+            ))
 
             # Azure AI Foundry - Embedding Model
             # CRITICAL: These are separate from Azure OpenAI Service
             self.ai_foundry_embedding_endpoint = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_ENDPOINT").rstrip('/')
             self.ai_foundry_embedding_deployment = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_DEPLOYMENT_NAME")
-            self.ai_foundry_embedding_key = _get_required_env("AZURE_AI_FOUNDRY_EMBEDDING_API_KEY")
+            self.ai_foundry_embedding_key = _get_optional_env(
+                "AZURE_AI_FOUNDRY_EMBEDDING_API_KEY",
+                ""
+            )
+            self.ai_foundry_embedding_use_azure_cli = _get_optional_env(
+                "AZURE_AI_FOUNDRY_EMBEDDING_USE_AZURE_CLI",
+                "false"
+            ).lower() == "true"
             self.ai_foundry_embedding_api_version = _get_optional_env(
                 "AZURE_AI_FOUNDRY_EMBEDDING_API_VERSION",
                 "2024-08-01-preview"
@@ -113,7 +166,14 @@ class AzureConfig:
             # CRITICAL: These are separate from Azure OpenAI Service
             self.ai_foundry_gpt4_endpoint = _get_required_env("AZURE_AI_FOUNDRY_GPT4_ENDPOINT").rstrip('/')
             self.ai_foundry_gpt4_deployment = _get_required_env("AZURE_AI_FOUNDRY_GPT4_DEPLOYMENT_NAME")
-            self.ai_foundry_gpt4_key = _get_required_env("AZURE_AI_FOUNDRY_GPT4_API_KEY")
+            self.ai_foundry_gpt4_key = _get_optional_env(
+                "AZURE_AI_FOUNDRY_GPT4_API_KEY",
+                ""
+            )
+            self.ai_foundry_gpt4_use_azure_cli = _get_optional_env(
+                "AZURE_AI_FOUNDRY_GPT4_USE_AZURE_CLI",
+                "false"
+            ).lower() == "true"
             self.ai_foundry_gpt4_api_version = _get_optional_env(
                 "AZURE_AI_FOUNDRY_GPT4_API_VERSION",
                 "2024-08-01-preview"
@@ -121,8 +181,16 @@ class AzureConfig:
 
             # Azure AI Search
             self.search_endpoint = _get_required_env("AZURE_SEARCH_ENDPOINT").rstrip('/')
-            self.search_admin_key = _get_required_env("AZURE_SEARCH_ADMIN_KEY")
+            self.search_admin_key = _get_optional_env("AZURE_SEARCH_ADMIN_KEY", "")
+            self.search_use_azure_cli = _get_optional_env(
+                "AZURE_SEARCH_USE_AZURE_CLI",
+                "false"
+            ).lower() == "true"
             self.search_index_name = _get_optional_env("AZURE_SEARCH_INDEX_NAME", "rag-documents-index")
+            self.search_api_version = _get_optional_env(
+                "AZURE_SEARCH_API_VERSION",
+                "2024-07-01"
+            )
 
             # Azure Application Insights (optional for local development)
             self.app_insights_connection_string = _get_optional_env(
@@ -178,6 +246,55 @@ class AzureConfig:
 
     def _validate(self):
         """Validate configuration values."""
+        if (
+            not self.doc_intelligence_use_azure_cli
+            and not self.doc_intelligence_key
+        ):
+            raise ConfigurationError(
+                "AZURE_DOCUMENT_INTELLIGENCE_KEY is required unless "
+                "AZURE_DOCUMENT_INTELLIGENCE_USE_AZURE_CLI=true"
+            )
+
+        if self.vision_analysis_enabled:
+            if not self.vision_endpoint or not self.vision_deployment_name:
+                raise ConfigurationError(
+                    "AZURE_VISION_ENDPOINT and AZURE_VISION_DEPLOYMENT_NAME "
+                    "are required when VISION_ANALYSIS_ENABLED=true"
+                )
+            if not self.vision_use_azure_cli and not self.vision_api_key:
+                raise ConfigurationError(
+                    "AZURE_VISION_API_KEY is required unless "
+                    "AZURE_VISION_USE_AZURE_CLI=true"
+                )
+            if not 1 <= self.vision_max_figures_per_document <= 50:
+                raise ConfigurationError(
+                    "VISION_MAX_FIGURES_PER_DOCUMENT must be between 1 and 50"
+                )
+
+        if (
+            not self.ai_foundry_embedding_use_azure_cli
+            and not self.ai_foundry_embedding_key
+        ):
+            raise ConfigurationError(
+                "AZURE_AI_FOUNDRY_EMBEDDING_API_KEY is required unless "
+                "AZURE_AI_FOUNDRY_EMBEDDING_USE_AZURE_CLI=true"
+            )
+
+        if not self.search_use_azure_cli and not self.search_admin_key:
+            raise ConfigurationError(
+                "AZURE_SEARCH_ADMIN_KEY is required unless "
+                "AZURE_SEARCH_USE_AZURE_CLI=true"
+            )
+
+        if (
+            not self.ai_foundry_gpt4_use_azure_cli
+            and not self.ai_foundry_gpt4_key
+        ):
+            raise ConfigurationError(
+                "AZURE_AI_FOUNDRY_GPT4_API_KEY is required unless "
+                "AZURE_AI_FOUNDRY_GPT4_USE_AZURE_CLI=true"
+            )
+
         # Validate endpoints are URLs
         endpoints = [
             self.doc_intelligence_endpoint,
@@ -228,6 +345,7 @@ class AzureConfig:
         logger.info("-" * 60)
         logger.info(f"Document Intelligence Endpoint: {self.doc_intelligence_endpoint}")
         logger.info(f"Document Intelligence Key: {_mask_secret(self.doc_intelligence_key)}")
+        logger.info(f"Formula Extraction Enabled: {self.formula_extraction_enabled}")
         logger.info("-" * 60)
         logger.info(f"AI Foundry Embedding Endpoint: {self.ai_foundry_embedding_endpoint}")
         logger.info(f"AI Foundry Embedding Deployment: {self.ai_foundry_embedding_deployment}")
