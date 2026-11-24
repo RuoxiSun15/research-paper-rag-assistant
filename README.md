@@ -10,6 +10,13 @@ Unlike a generic document chatbot, PaperLens exposes its retrieval trace. Every
 answer can be inspected alongside the Top-K text, equation, and figure chunks
 that supported it.
 
+> [!IMPORTANT]
+> **Bring Your Own Azure:** this repository does not provide a shared hosted
+> backend, shared API keys, or access to the maintainer's Azure subscription.
+> Each user must deploy the application with resources and credentials from
+> their own Azure subscription. Cloning the repository alone cannot consume
+> the maintainer's Azure credits.
+
 > This repository is an independent extension of
 > [`dukewillbe185/multiagent-rag`](https://github.com/dukewillbe185/multiagent-rag).
 > See [Acknowledgments](#acknowledgments) for attribution.
@@ -145,6 +152,24 @@ roles. Typical development roles include:
 - `Search Index Data Contributor`
 
 Use least-privilege roles appropriate to your environment.
+
+## Bring Your Own Azure Model
+
+PaperLens is distributed as self-hosted source code. The frontend calls the
+FastAPI backend on the same origin, and that backend calls the Azure resources
+configured by the person running it.
+
+- There is no maintainer-operated public API.
+- No credentials, endpoints, PDFs, or Azure resource IDs are bundled with the
+  repository.
+- `.env` is ignored by Git and must be created locally by each user.
+- Every Document Intelligence, Azure OpenAI, Vision, and AI Search request is
+  billed to the subscription configured by that user.
+- GitHub Pages alone cannot run the RAG application because it cannot host the
+  Python API or securely store Azure credentials.
+
+For cloud hosting, fork the repository and deploy both the frontend and FastAPI
+backend into your own Azure account. See [Self-hosted deployment](DEPLOYMENT.md).
 
 ## Quick Start
 
